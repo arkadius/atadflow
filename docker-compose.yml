@@ -11,5 +11,20 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  spark-connect:
+    image: apache/spark:4.0.2
+    container_name: atadflow-spark-connect
+    command: >
+      /opt/spark/sbin/start-connect-server.sh
+      --packages org.apache.spark:spark-connect_2.13:4.0.2
+      --conf spark.jars.ivy=/tmp/.ivy2
+    ports:
+      - "15002:15002"
+      - "4040:4040"
+    environment:
+      SPARK_NO_DAEMONIZE: "true"
+      SPARK_USER_NAME: spark
+      HOME: /tmp
+
 volumes:
   pgdata:

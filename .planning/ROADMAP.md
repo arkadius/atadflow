@@ -60,7 +60,7 @@ Plans:
 | SUB-01 | Phase 2 | Async Python subprocess execution |
 | SUB-02 | Phase 2 | Temp file write + cleanup |
 | LIFE-01 | Phase 2 | Status transitions (PENDING → RUNNING → COMPLETED/FAILED) |
-| LIFE-02 | Phase 2 | Cancel via process kill |
+| LIFE-02 | Phase 2 | Cancel via process kill |     
 | LIFE-03 | Phase 2 | Frontend polls every 5s |
 
 **Coverage:** 8/8 requirements mapped ✓

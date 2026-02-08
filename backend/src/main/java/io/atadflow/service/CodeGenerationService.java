@@ -7,6 +7,7 @@ import io.atadflow.nodetype.NodeTypeDescriptor;
 import io.atadflow.nodetype.NodeTypeRegistry;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 import java.util.*;
 
@@ -15,6 +16,9 @@ public class CodeGenerationService {
 
     @Inject
     NodeTypeRegistry nodeTypeRegistry;
+
+    @ConfigProperty(name = "spark.connect.url")
+    String sparkConnectUrl;
 
     public String generateCode(FlowDto flow) {
         List<FlowNodeDto> sorted = topologicalSort(flow.nodes(), flow.edges());
@@ -37,7 +41,7 @@ public class CodeGenerationService {
         StringBuilder sb = new StringBuilder();
         sb.append("from pyspark.sql import SparkSession\n");
         sb.append("from pyspark.sql.functions import *\n\n");
-        sb.append("spark = SparkSession.builder.appName(\"").append(flow.name()).append("\").getOrCreate()\n\n");
+        sb.append("spark = SparkSession.builder.remote(\"").append(sparkConnectUrl).append("\").getOrCreate()\n\n");
 
         for (FlowNodeDto node : sorted) {
             String varName = varNames.get(node.nodeKey());
