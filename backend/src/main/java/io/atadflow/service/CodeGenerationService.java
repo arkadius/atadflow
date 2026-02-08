@@ -76,7 +76,7 @@ public class CodeGenerationService {
         // Remove unreplaced simple placeholders
         result = result.replaceAll("\\{\\{config\\.[^}]+}}", "");
         // Remove mustache-style conditional blocks for missing values
-        result = result.replaceAll("\\{\\{#[^}]+}}.*?\\{\\{/[^}]+}}", "");
+        result = result.replaceAll("(?s)\\{\\{#[^}]+}}.*?\\{\\{/[^}]+}}", "");
         return result;
     }
 
