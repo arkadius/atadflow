@@ -1,4 +1,4 @@
-# atadflow
+# atad-flow
 
 Visual flow designer for PySpark Structured Streaming pipelines. Design pipelines with drag-and-drop nodes, inline parameter editing, and per-node Python code, then execute them as Spark jobs.
 
