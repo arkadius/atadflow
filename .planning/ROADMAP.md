@@ -11,6 +11,12 @@
 
 **Requirements:** INFRA-01, INFRA-02, INFRA-03
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Spark Connect server in Docker + configuration
+- [ ] 01-02-PLAN.md — Code generation update + Python health check
+
 **Success Criteria:**
 1. `docker compose up` starts Spark Connect server, port 15002 reachable from host
 2. CodeGenerationService generates PySpark using `SparkSession.builder.remote("sc://...")` instead of local `.appName()`
@@ -68,4 +74,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-08 after initial creation*
+*Last updated: 2026-02-08 after Phase 1 planning*
