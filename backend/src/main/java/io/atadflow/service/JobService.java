@@ -51,7 +51,7 @@ public class JobService {
 
     @Transactional
     public JobDto submitJob(SubmitJobRequest request) {
-        Flow flow = Flow.findById(requesok,t.flowId());
+        Flow flow = Flow.findById(request.flowId());
         if (flow == null) throw new FlowNotFoundException(request.flowId());
 
         FlowDto flowDto = flowMapper.toDto(flow);
