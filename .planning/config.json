@@ -1,0 +1,38 @@
+{
+  "project_name": "Atadflow",
+  "commit_docs": true,
+  "research_enabled": true,
+  "models": {
+    "quality": {
+      "researcher": "opus",
+      "synthesizer": "opus",
+      "roadmapper": "opus",
+      "phase_researcher": "opus",
+      "planner": "opus",
+      "plan_checker": "opus",
+      "executor": "opus",
+      "verifier": "opus"
+    },
+    "balanced": {
+      "researcher": "sonnet",
+      "synthesizer": "sonnet",
+      "roadmapper": "sonnet",
+      "phase_researcher": "sonnet",
+      "planner": "sonnet",
+      "plan_checker": "sonnet",
+      "executor": "sonnet",
+      "verifier": "sonnet"
+    },
+    "budget": {
+      "researcher": "haiku",
+      "synthesizer": "haiku",
+      "roadmapper": "haiku",
+      "phase_researcher": "sonnet",
+      "planner": "sonnet",
+      "plan_checker": "haiku",
+      "executor": "sonnet",
+      "verifier": "haiku"
+    }
+  },
+  "active_profile": "balanced"
+}
