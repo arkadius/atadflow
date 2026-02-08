@@ -5,17 +5,17 @@
 **Phases:** 2
 **Requirements:** 8
 
-## Phase 1: Spark Connect Infrastructure
+## Phase 1: Spark Connect Infrastructure ✓ (2026-02-08)
 
 **Goal:** Spark Connect server running in Docker, code generation produces valid Spark Connect PySpark, Python+PySpark availability verified on startup.
 
 **Requirements:** INFRA-01, INFRA-02, INFRA-03
 
-**Plans:** 2 plans
+**Plans:** 2 plans — Complete
 
 Plans:
-- [ ] 01-01-PLAN.md — Spark Connect server in Docker + configuration
-- [ ] 01-02-PLAN.md — Code generation update + Python health check
+- [x] 01-01-PLAN.md — Spark Connect server in Docker + configuration
+- [x] 01-02-PLAN.md — Code generation update + Python health check
 
 **Success Criteria:**
 1. `docker compose up` starts Spark Connect server, port 15002 reachable from host
@@ -74,4 +74,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-08 after Phase 1 planning*
+*Last updated: 2026-02-08 after Phase 1 completion*
