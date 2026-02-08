@@ -35,6 +35,13 @@ Plans:
 
 **Requirements:** SUB-01, SUB-02, LIFE-01, LIFE-02, LIFE-03
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
+- [ ] 02-02-PLAN.md — JobService async integration + test updates
+- [ ] 02-03-PLAN.md — Frontend polling in useJobs hook
+
 **Success Criteria:**
 1. User clicks "Run" on a rate→console flow and sees job status change from PENDING to RUNNING
 2. Streaming job runs until user clicks "Cancel", which transitions to CANCELLED
@@ -60,7 +67,7 @@ Plans:
 | SUB-01 | Phase 2 | Async Python subprocess execution |
 | SUB-02 | Phase 2 | Temp file write + cleanup |
 | LIFE-01 | Phase 2 | Status transitions (PENDING → RUNNING → COMPLETED/FAILED) |
-| LIFE-02 | Phase 2 | Cancel via process kill |     
+| LIFE-02 | Phase 2 | Cancel via process kill |
 | LIFE-03 | Phase 2 | Frontend polls every 5s |
 
 **Coverage:** 8/8 requirements mapped ✓
@@ -74,4 +81,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-08 after Phase 1 completion*
+*Last updated: 2026-02-08 after Phase 2 planning*
