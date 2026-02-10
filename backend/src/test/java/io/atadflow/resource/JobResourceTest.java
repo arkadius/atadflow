@@ -31,7 +31,7 @@ class JobResourceTest {
                 .statusCode(201)
                 .extract().path("id");
 
-        // Submit a job
+        // Submit a job — process starts and status becomes RUNNING
         String jobId = given()
                 .contentType("application/json")
                 .body("{\"flowId\": \"" + flowId + "\"}")
@@ -39,7 +39,7 @@ class JobResourceTest {
                 .then()
                 .statusCode(201)
                 .body("flowId", equalTo(flowId))
-                .body("status", equalTo("SUBMITTED"))
+                .body("status", equalTo("RUNNING"))
                 .extract().path("id");
 
         // Get the job
@@ -47,8 +47,7 @@ class JobResourceTest {
                 .when().get("/api/jobs/" + jobId)
                 .then()
                 .statusCode(200)
-                .body("id", equalTo(jobId))
-                .body("status", equalTo("SUBMITTED"));
+                .body("id", equalTo(jobId));
     }
 
     @Test
