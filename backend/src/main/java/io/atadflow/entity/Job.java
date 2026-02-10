@@ -23,6 +23,9 @@ public class Job extends PanacheEntityBase {
     @Column(name = "spark_app_id")
     public String sparkAppId;
 
+    @Column(name = "process_pid")
+    public Long processPid;
+
     @Column(name = "submitted_at")
     public LocalDateTime submittedAt;
 
