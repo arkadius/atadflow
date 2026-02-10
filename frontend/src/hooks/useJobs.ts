@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { jobsApi } from '@/api/jobs';
-import type { JobDto } from '@/types/job';
+import type { JobDto, JobStatus } from '@/types/job';
+
+const ACTIVE_STATUSES: JobStatus[] = ['PENDING', 'SUBMITTED', 'RUNNING'];
 
 export function useJobs(flowId: string | undefined) {
   const [jobs, setJobs] = useState<JobDto[]>([]);
@@ -17,6 +19,15 @@ export function useJobs(flowId: string | undefined) {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Poll every 5s when any job is active
+  useEffect(() => {
+    const hasActiveJobs = jobs.some(j => ACTIVE_STATUSES.includes(j.status));
+    if (!hasActiveJobs) return;
+
+    const intervalId = window.setInterval(refresh, 5000);
+    return () => clearInterval(intervalId);
+  }, [jobs, refresh]);
 
   const submit = useCallback(async () => {
     if (!flowId) return;
