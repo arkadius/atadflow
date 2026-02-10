@@ -38,7 +38,7 @@ Plans:
 **Plans:** 3 plans
 
 Plans:
-- [ ] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
+- [x] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
 - [ ] 02-02-PLAN.md — JobService async integration + test updates
 - [x] 02-03-PLAN.md — Frontend polling in useJobs hook
 
@@ -81,4 +81,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-08 after Phase 2 planning*
+*Last updated: 2026-02-10 after 02-01 completion*
