@@ -2,11 +2,11 @@
 
 ## Current Position
 
-Phase: Phase 1 — Spark Connect Infrastructure (Complete)
-Plan: 2/2 complete
-Status: Phase complete
-Progress: ██████████ 100%
-Last activity: 2026-02-08 — Completed Phase 1 (2 plans executed)
+Phase: Phase 2 — Job Execution & Lifecycle (In progress)
+Plan: 1/3 complete (02-03)
+Status: In progress
+Progress: ███░░░░░░░ 30%
+Last activity: 2026-02-10 — Completed 02-03-PLAN.md (frontend polling)
 
 ## Project Reference
 
@@ -26,6 +26,7 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 - Spark Connect server running in Docker (apache/spark:4.0.2, port 15002)
 - PythonHealthCheck verifies Python+PySpark at startup, excluded from test profile
 - python.executable configurable via application.properties (default: venv/bin/python3)
+- useJobs hook now polls every 5s when active jobs exist (PENDING/SUBMITTED/RUNNING)
 
 ## Decisions
 
@@ -36,9 +37,11 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 | 01-02 | @UnlessBuildProfile("test") for health check | Testcontainers don't have Python |
 | 01-02 | Configurable python.executable | Support venv and system Python |
 | 01-02 | @Observes StartupEvent pattern | Allows @ConfigProperty injection |
+| 02-03 | useEffect cleanup pattern over useRef for intervals | Simpler lifecycle handling, automatic cleanup |
 
 ## Session
 
-Last session: 2026-02-08
-Stopped at: Completed Phase 1 (all plans)
+Last session: 2026-02-10
+Stopped at: Completed 02-03-PLAN.md (frontend polling)
 Resume file: None
+Remaining plans: 02-01-PLAN.md (subprocess engine), 02-02-PLAN.md (async integration)

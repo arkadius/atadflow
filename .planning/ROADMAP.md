@@ -40,7 +40,7 @@ Plans:
 Plans:
 - [ ] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
 - [ ] 02-02-PLAN.md — JobService async integration + test updates
-- [ ] 02-03-PLAN.md — Frontend polling in useJobs hook
+- [x] 02-03-PLAN.md — Frontend polling in useJobs hook
 
 **Success Criteria:**
 1. User clicks "Run" on a rate→console flow and sees job status change from PENDING to RUNNING
