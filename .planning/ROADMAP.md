@@ -29,18 +29,19 @@ Plans:
 - New: `PythonHealthCheck.java` — Quarkus startup health check verifying `python --version` and `pyspark --version`
 - `application.properties` — Add `spark.connect.url` config property
 
-## Phase 2: Job Execution & Lifecycle ✓ (2026-02-12)
+## Phase 2: Job Execution & Lifecycle (2026-02-12)
 
 **Goal:** User submits a flow, backend executes PySpark as subprocess, status transitions visible in UI, cancellation works.
 
 **Requirements:** SUB-01, SUB-02, LIFE-01, LIFE-02, LIFE-03
 
-**Plans:** 3 plans — Complete
+**Plans:** 4 plans (3 complete, 1 gap closure)
 
 Plans:
 - [x] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
 - [x] 02-02-PLAN.md — JobService async integration + test updates
 - [x] 02-03-PLAN.md — Frontend polling in useJobs hook
+- [ ] 02-04-PLAN.md — Gap closure: Add signal handler to generated Python code for graceful cancellation
 
 **Success Criteria:**
 1. User clicks "Run" on a rate→console flow and sees job status change from PENDING to RUNNING
@@ -48,6 +49,7 @@ Plans:
 3. If Python process exits with error, job transitions to FAILED
 4. Frontend automatically refreshes job status every 5 seconds for active jobs
 5. Temp .py files are cleaned up after job starts (or on failure)
+6. **Cancelling a job actually stops Spark queries on the Spark Connect server** (gap closure)
 
 **Key Changes:**
 - `SparkSubmissionService.java` — Replace stub: write code to temp file, launch `python script.py` via ProcessBuilder, capture PID, monitor process
@@ -56,6 +58,7 @@ Plans:
 - New: Flyway migration `V2__add_process_pid.sql` — `ALTER TABLE job ADD COLUMN process_pid BIGINT`
 - `useJobs.ts` hook — Add polling interval (5s) when any job is PENDING/SUBMITTED/RUNNING
 - `application.properties` — Add `spark.connect.url`, `spark.python.executable` config
+- **`CodeGenerationService.java` — Add signal handler to generated Python code for graceful query shutdown** (gap closure)
 
 ## Requirement Coverage
 
@@ -81,4 +84,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-12 after Phase 2 completion*
+*Last updated: 2026-02-12 after Phase 2 gap closure planning*
