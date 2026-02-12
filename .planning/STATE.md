@@ -2,18 +2,17 @@
 
 ## Current Position
 
-Phase: Not started (next milestone not yet defined)
-Plan: Not started
-Status: Ready to plan
-Progress: v1.0 shipped
-Last activity: 2026-02-12 — v1.0 milestone complete
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-02-12 — Milestone v1.1 started
 
 ## Project Reference
 
 See: .planning/PROJECT.md (updated 2026-02-12)
 
 **Core value:** Users can visually design a streaming pipeline and execute it on Spark without writing code.
-**Current focus:** Planning next milestone
+**Current focus:** v1.1 Self-Contained Distribution
 
 ## Accumulated Context
 
@@ -30,6 +29,6 @@ Full decision log in PROJECT.md Key Decisions table.
 ## Session
 
 Last session: 2026-02-12
-Stopped at: v1.0 milestone complete
+Stopped at: Milestone v1.1 started — defining requirements
 Resume file: None
-Remaining plans: None (start next milestone with /gsd:new-milestone)
+Remaining plans: None (define requirements next)

@@ -31,7 +31,14 @@ Users can visually design a streaming pipeline and execute it on Spark without w
 
 ### Active
 
-(None — next milestone not yet defined)
+## Current Milestone: v1.1 Self-Contained Distribution
+
+**Goal:** Package Atadflow as a single Docker image (backend + frontend + Python deps) with integration tests proving end-to-end execution.
+
+**Target features:**
+- Frontend static files served by Quarkus (Vite build bundled into backend)
+- Docker image with Quarkus app + Python/PySpark pre-installed
+- Integration test: app image + Spark Connect, create flow, submit job, verify lifecycle + output
 
 ### Out of Scope
 
@@ -72,4 +79,4 @@ Shipped v1.0 with 1,556 lines Java + 1,051 lines TypeScript.
 | useEffect cleanup pattern for polling | Simpler lifecycle handling, automatic cleanup | ✓ Good |
 
 ---
-*Last updated: 2026-02-12 after v1.0 milestone*
+*Last updated: 2026-02-12 after v1.1 milestone start*
