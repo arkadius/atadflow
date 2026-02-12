@@ -13,6 +13,7 @@ import io.atadflow.mapper.JobMapper;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import org.jboss.logging.Logger;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -20,6 +21,8 @@ import java.util.UUID;
 
 @ApplicationScoped
 public class JobService {
+
+    private static final Logger LOG = Logger.getLogger(JobService.class);
 
     @Inject
     JobMapper mapper;
@@ -63,8 +66,20 @@ public class JobService {
         job.submittedAt = LocalDateTime.now();
         job.persist();
 
-        sparkSubmissionService.submit(job, code);
-        job.persist();
+        try {
+            sparkSubmissionService.submit(job, code);
+            // submit() sets job status to RUNNING on success or FAILED on IOException
+            job.persist();
+            LOG.infof("Job %s submitted with status %s", job.id, job.status);
+        } catch (Exception e) {
+            // SparkSubmissionService catches IOException internally and sets FAILED
+            // This catch handles any unexpected runtime exceptions
+            LOG.errorf(e, "Unexpected error submitting job %s", job.id);
+            job.status = JobStatus.FAILED;
+            job.errorMessage = "Unexpected error: " + e.getMessage();
+            job.finishedAt = LocalDateTime.now();
+            job.persist();
+        }
 
         return mapper.toDto(job);
     }
