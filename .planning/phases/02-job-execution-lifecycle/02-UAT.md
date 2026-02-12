@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 02-job-execution-lifecycle
 source: [02-01-SUMMARY.md, 02-02-SUMMARY.md, 02-03-SUMMARY.md]
 started: 2026-02-12T19:15:00Z
@@ -45,12 +45,19 @@ skipped: 3
 
 ## Gaps
 
-- truth: "Cancelling a running job kills the Python process"
+- truth: "Cancelling a running job kills the Python process and stops Spark queries"
   status: failed
   reason: "User reported: Job status is CANCELLED but python process is still there and job is still processing"
   severity: major
   test: 2
-  root_cause: ""
-  artifacts: []
-  missing: []
-  debug_session: ""
+  root_cause: "Killing the Python client process does NOT cancel Spark jobs on the remote Spark Connect server. The generated Python code has no signal handler — SIGTERM kills the process without stopping streaming queries on the server."
+  artifacts:
+    - path: "backend/src/main/java/io/atadflow/service/CodeGenerationService.java"
+      issue: "Generated Python code has no signal handler or graceful shutdown logic"
+    - path: "backend/src/main/java/io/atadflow/service/SparkSubmissionService.java"
+      issue: "cancel() only kills Python client process, no interaction with Spark server"
+  missing:
+    - "Add SIGTERM/SIGINT signal handler to generated Python code"
+    - "Collect StreamingQuery references and call query.stop() on shutdown"
+    - "Replace blocking awaitAnyTermination() with interruptible pattern"
+  debug_session: ".planning/debug/spark-cancel-not-stopping.md"
