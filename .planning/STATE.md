@@ -3,10 +3,10 @@
 ## Current Position
 
 Phase: Phase 2 — Job Execution & Lifecycle (Complete)
-Plan: 3/3 complete (02-01, 02-02, 02-03)
-Status: Phase complete
-Progress: ██████████ 100%
-Last activity: 2026-02-12 — Completed 02-02-PLAN.md (JobService integration with subprocess execution)
+Plan: 4/4 complete (02-01, 02-02, 02-03, 02-04)
+Status: Phase complete with gap closure
+Progress: ████████████ 100%
+Last activity: 2026-02-12 — Completed 02-04-PLAN.md (Signal handler gap closure for graceful cancellation)
 
 ## Project Reference
 
@@ -33,6 +33,9 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 - Process cancellation: SIGTERM then SIGKILL after 5s via ProcessHandle
 - JobService gracefully handles subprocess start failures (returns FAILED job, not 500 error)
 - Tests environment-agnostic: work with or without Python/PySpark installed (anyOf RUNNING/FAILED)
+- Generated Python code includes signal handlers for SIGTERM/SIGINT
+- StreamingQuery references tracked in streaming_queries list for graceful shutdown
+- Signal handlers call query.stop() on all queries before sys.exit(0)
 
 ## Decisions
 
@@ -47,10 +50,13 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 | 02-01 | Process.onExit().thenAcceptAsync() with ManagedExecutor | Context-propagated async process monitoring |
 | 02-01 | %test.python.executable=/usr/bin/python3 | Test environment lacks venv |
 | 02-03 | useEffect cleanup pattern over useRef for intervals | Simpler lifecycle handling, automatic cleanup |
+| 02-04 | Inject signal handlers in generated Python code | Python process needs direct SparkSession access for query.stop() |
+| 02-04 | Track only write-stream nodes in streaming_queries | Only write-stream creates StreamingQuery objects needing shutdown |
+| 02-04 | Register both SIGTERM and SIGINT handlers | Handle both cancel (SIGTERM) and user interrupt (SIGINT) scenarios |
 
 ## Session
 
 Last session: 2026-02-12
-Stopped at: Completed 02-02-PLAN.md (JobService integration with subprocess execution)
+Stopped at: Completed 02-04-PLAN.md (Signal handler gap closure)
 Resume file: None
-Remaining plans: None (Phase 02 complete)
+Remaining plans: None (Phase 02 complete with gap closure)

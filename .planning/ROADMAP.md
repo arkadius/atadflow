@@ -29,19 +29,19 @@ Plans:
 - New: `PythonHealthCheck.java` — Quarkus startup health check verifying `python --version` and `pyspark --version`
 - `application.properties` — Add `spark.connect.url` config property
 
-## Phase 2: Job Execution & Lifecycle (2026-02-12)
+## Phase 2: Job Execution & Lifecycle ✓ (2026-02-12)
 
 **Goal:** User submits a flow, backend executes PySpark as subprocess, status transitions visible in UI, cancellation works.
 
 **Requirements:** SUB-01, SUB-02, LIFE-01, LIFE-02, LIFE-03
 
-**Plans:** 4 plans (3 complete, 1 gap closure)
+**Plans:** 4 plans — Complete
 
 Plans:
 - [x] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
 - [x] 02-02-PLAN.md — JobService async integration + test updates
 - [x] 02-03-PLAN.md — Frontend polling in useJobs hook
-- [ ] 02-04-PLAN.md — Gap closure: Add signal handler to generated Python code for graceful cancellation
+- [x] 02-04-PLAN.md — Gap closure: Add signal handler to generated Python code for graceful cancellation
 
 **Success Criteria:**
 1. User clicks "Run" on a rate→console flow and sees job status change from PENDING to RUNNING
