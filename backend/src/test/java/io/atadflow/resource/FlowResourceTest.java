@@ -148,9 +148,7 @@ class FlowResourceTest {
                 .body(containsString("import signal"))
                 .body(containsString("import sys"))
                 .body(containsString("signal.signal(signal.SIGTERM"))
-                .body(containsString("streaming_queries = []"))
-                .body(containsString("streaming_queries.append(query_"))
-                .body(containsString("query.stop()"))
+                .body(containsString("spark.stop()"))
                 .body(containsString("def handle_shutdown"));
     }
 

@@ -44,14 +44,12 @@ public class CodeGenerationService {
         sb.append("import signal\n");
         sb.append("import sys\n\n");
         sb.append("spark = SparkSession.builder.remote(\"").append(sparkConnectUrl).append("\").getOrCreate()\n\n");
-        sb.append("streaming_queries = []\n\n");
         sb.append("def handle_shutdown(sig, frame):\n");
-        sb.append("    print(f\"Received signal {sig}, stopping streaming queries...\")\n");
-        sb.append("    for query in streaming_queries:\n");
-        sb.append("        try:\n");
-        sb.append("            query.stop()\n");
-        sb.append("        except Exception as e:\n");
-        sb.append("            print(f\"Error stopping query: {e}\")\n");
+        sb.append("    print(f\"Received signal {sig}, stopping Spark session...\")\n");
+        sb.append("    try:\n");
+        sb.append("        spark.stop()\n");
+        sb.append("    except Exception as e:\n");
+        sb.append("        print(f\"Error stopping Spark session: {e}\")\n");
         sb.append("    sys.exit(0)\n\n");
         sb.append("signal.signal(signal.SIGTERM, handle_shutdown)\n");
         sb.append("signal.signal(signal.SIGINT, handle_shutdown)\n\n");
@@ -69,11 +67,6 @@ public class CodeGenerationService {
                     String code = resolveTemplate(descriptor.get().defaultCodeTemplate(), varName, inputVar, node.config());
                     sb.append("# ").append(node.label()).append("\n");
                     sb.append(code.strip()).append("\n");
-
-                    // For write-stream nodes, add streaming query tracking
-                    if ("write-stream".equals(node.nodeType())) {
-                        sb.append("streaming_queries.append(query_").append(varName).append(")\n");
-                    }
 
                     sb.append("\n");
                 }
