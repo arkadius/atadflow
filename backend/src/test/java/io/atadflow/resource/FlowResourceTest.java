@@ -144,7 +144,14 @@ class FlowResourceTest {
                 .statusCode(200)
                 .body(containsString("SparkSession"))
                 .body(containsString("readStream"))
-                .body(containsString("writeStream"));
+                .body(containsString("writeStream"))
+                .body(containsString("import signal"))
+                .body(containsString("import sys"))
+                .body(containsString("signal.signal(signal.SIGTERM"))
+                .body(containsString("streaming_queries = []"))
+                .body(containsString("streaming_queries.append(query_"))
+                .body(containsString("query.stop()"))
+                .body(containsString("def handle_shutdown"));
     }
 
     @Test
