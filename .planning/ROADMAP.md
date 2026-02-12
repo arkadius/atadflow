@@ -29,17 +29,17 @@ Plans:
 - New: `PythonHealthCheck.java` — Quarkus startup health check verifying `python --version` and `pyspark --version`
 - `application.properties` — Add `spark.connect.url` config property
 
-## Phase 2: Job Execution & Lifecycle
+## Phase 2: Job Execution & Lifecycle ✓ (2026-02-12)
 
 **Goal:** User submits a flow, backend executes PySpark as subprocess, status transitions visible in UI, cancellation works.
 
 **Requirements:** SUB-01, SUB-02, LIFE-01, LIFE-02, LIFE-03
 
-**Plans:** 3 plans
+**Plans:** 3 plans — Complete
 
 Plans:
 - [x] 02-01-PLAN.md — Subprocess execution engine (migration + Job entity + SparkSubmissionService rewrite)
-- [ ] 02-02-PLAN.md — JobService async integration + test updates
+- [x] 02-02-PLAN.md — JobService async integration + test updates
 - [x] 02-03-PLAN.md — Frontend polling in useJobs hook
 
 **Success Criteria:**
@@ -81,4 +81,4 @@ Phase 1 (Infrastructure)
 
 ---
 *Roadmap created: 2026-02-08*
-*Last updated: 2026-02-10 after 02-01 completion*
+*Last updated: 2026-02-12 after Phase 2 completion*
