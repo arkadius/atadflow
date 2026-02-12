@@ -2,11 +2,11 @@
 
 ## Current Position
 
-Phase: Phase 2 — Job Execution & Lifecycle (In progress)
-Plan: 2/3 complete (02-01, 02-03)
-Status: In progress
-Progress: ██████░░░░ 60%
-Last activity: 2026-02-10 — Completed 02-01-PLAN.md (subprocess execution engine)
+Phase: Phase 2 — Job Execution & Lifecycle (Complete)
+Plan: 3/3 complete (02-01, 02-02, 02-03)
+Status: Phase complete
+Progress: ██████████ 100%
+Last activity: 2026-02-12 — Completed 02-02-PLAN.md (JobService integration with subprocess execution)
 
 ## Project Reference
 
@@ -31,6 +31,8 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 - Process.onExit() + ManagedExecutor for async lifecycle tracking
 - QuarkusTransaction.requiringNew() for transactions in async callbacks (CDI proxy bypass)
 - Process cancellation: SIGTERM then SIGKILL after 5s via ProcessHandle
+- JobService gracefully handles subprocess start failures (returns FAILED job, not 500 error)
+- Tests environment-agnostic: work with or without Python/PySpark installed (anyOf RUNNING/FAILED)
 
 ## Decisions
 
@@ -48,7 +50,7 @@ See: .planning/PROJECT.md (updated 2026-02-08)
 
 ## Session
 
-Last session: 2026-02-10
-Stopped at: Completed 02-01-PLAN.md (subprocess execution engine)
+Last session: 2026-02-12
+Stopped at: Completed 02-02-PLAN.md (JobService integration with subprocess execution)
 Resume file: None
-Remaining plans: 02-02-PLAN.md (async integration)
+Remaining plans: None (Phase 02 complete)
