@@ -53,6 +53,78 @@ cd backend
 
 Tests use Quarkus Dev Services which automatically starts a PostgreSQL container via Testcontainers — no manual database setup needed.
 
+## Docker Deployment
+
+### Building the Docker Image
+
+The project includes a multi-stage Dockerfile that builds both frontend and backend:
+
+```bash
+docker build -t atadflow:latest .
+```
+
+This creates a ~450MB image containing:
+- Quarkus backend application
+- React frontend (bundled into backend JAR)
+- Python 3.12 + PySpark 4.0.2 runtime
+
+**Build time:** 2-4 minutes (first build), ~1 minute (subsequent with Docker layer caching)
+
+### Running with Docker Compose
+
+Start the complete stack (PostgreSQL + Spark Connect + Atadflow):
+
+```bash
+# Build and start all services
+docker compose up -d
+
+# Watch application logs
+docker compose logs -f atadflow
+
+# Check service health
+docker compose ps
+
+# Stop all services
+docker compose down
+```
+
+Access the application at **http://localhost:8080**
+
+### Configuration
+
+Override configuration via environment variables in `docker-compose.yml`:
+
+- `DATABASE_URL` - PostgreSQL JDBC URL (default: `jdbc:postgresql://postgres:5432/atadflow`)
+- `SPARK_CONNECT_URL` - Spark Connect endpoint (default: `sc://spark-connect:15002`)
+- `QUARKUS_DATASOURCE_USERNAME` - Database username
+- `QUARKUS_DATASOURCE_PASSWORD` - Database password
+
+### Health Checks
+
+The application exposes health check endpoints:
+
+- `/q/health/live` - Liveness probe (is app running?)
+- `/q/health/ready` - Readiness probe (can app accept traffic?)
+- `/q/health` - Combined health status
+
+Docker Compose uses these endpoints to ensure services start in correct order:
+postgres → spark-connect → atadflow
+
+### Integration Testing
+
+Run end-to-end tests against the built Docker image:
+
+```bash
+cd backend
+./gradlew quarkusIntegrationTest
+```
+
+These tests use Testcontainers to spin up the Docker image and validate:
+- Frontend accessible and serves React app
+- Backend API endpoints work
+- Job submission and execution through Spark Connect
+- Health check endpoints respond correctly
+
 ## Project Structure
 
 ```

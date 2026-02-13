@@ -10,6 +10,11 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atadflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   spark-connect:
     image: apache/spark:4.0.2
@@ -25,6 +30,37 @@ services:
       SPARK_NO_DAEMONIZE: "true"
       SPARK_USER_NAME: spark
       HOME: /tmp
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4040"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  atadflow:
+    image: atadflow:latest
+    container_name: atadflow-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/atadflow
+      SPARK_CONNECT_URL: sc://spark-connect:15002
+      QUARKUS_DATASOURCE_USERNAME: atadflow
+      QUARKUS_DATASOURCE_PASSWORD: atadflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      spark-connect:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/q/health/live"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
 
 volumes:
   pgdata:

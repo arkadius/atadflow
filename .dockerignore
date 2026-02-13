@@ -1,0 +1,27 @@
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Build artifacts (rebuilt inside Docker)
+frontend/dist/
+frontend/node_modules/
+backend/build/
+backend/.gradle/
+backend/venv/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Planning and docs
+.planning/
+.claude/
+README.md

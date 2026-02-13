@@ -16,11 +16,16 @@ dependencies {
     implementation(libs.quarkus.jdbc.postgresql)
     implementation(libs.quarkus.flyway)
     implementation(libs.quarkus.smallrye.openapi)
+    implementation(libs.quarkus.smallrye.health)
     implementation(libs.quarkus.arc)
 
     testImplementation(libs.quarkus.junit5)
     testImplementation(libs.rest.assured)
     testImplementation(libs.assertj.core)
+    testImplementation("org.testcontainers:testcontainers:1.20.1")
+    testImplementation("org.testcontainers:junit-jupiter:1.20.1")
+    testImplementation("org.testcontainers:postgresql:1.20.1")
+    testImplementation("org.awaitility:awaitility:4.2.0")
 }
 
 group = "io.atadflow"
