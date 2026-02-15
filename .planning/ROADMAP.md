@@ -44,12 +44,12 @@ Plans:
 
 ### Phase 4: K8s Integration Test & Documentation
 
-**Goal:** Integration test proving deployment works on K8s, README section on Telepresence
+**Goal:** Integration test proving full-stack deployment on K8s with Spark execution, Telepresence docs
 **Depends on:** Phase 3
 **Plans:** 1 plan
 
 Plans:
-- [ ] 04-01-PLAN.md — K8s integration test (Testcontainers K3s + Helm), Helm test hook, Telepresence README
+- [ ] 04-01-PLAN.md — K8s integration test (external k3d + Spark K8s Operator + full lifecycle), Helm test hook, Telepresence README
 
 ---
 
