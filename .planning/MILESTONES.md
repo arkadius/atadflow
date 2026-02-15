@@ -1,5 +1,32 @@
 # Milestones: Atadflow
 
+## v1.1 Self-Contained Docker Distribution (Shipped: 2026-02-13)
+
+**Delivered:** Single Docker image packaging backend + frontend + Python/PySpark runtime, with health monitoring and integration tests proving end-to-end deployment.
+
+**Phases completed:** None (implemented in single commit outside GSD phase tracking)
+
+**Key accomplishments:**
+
+- Multi-stage Dockerfile: Node 22 → Gradle/JDK 25 → JRE 25 + Python 3.12 + PySpark (670MB)
+- Frontend served by Quarkus (SPA routing via Vert.x filters, static assets in META-INF/resources/)
+- Python dependencies bundled: pyspark[connect]==4.0.2, pandas, pyarrow, numpy
+- Health checks: PythonLivenessCheck, /q/health/live, /q/health/ready
+- Docker Compose: postgres → spark-connect → atadflow with health-based ordering
+- DockerComposeIntegrationTest: frontend serving, health checks, API, job execution
+- CORS scoped to %dev profile only
+
+**Stats:**
+
+- 12 files created/modified (897 insertions)
+- 1 commit (implemented outside GSD)
+
+**Git range:** `feat: implement v1.1 Self-Contained Docker Distribution`
+
+**Last phase number:** 2
+
+---
+
 ## v1.0 Minimal Spark Execution (Shipped: 2026-02-12)
 
 **Delivered:** End-to-end streaming pipeline execution — users design flows visually and run them on Spark Connect with full job lifecycle management.
