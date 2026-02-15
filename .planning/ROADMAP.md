@@ -13,10 +13,10 @@ Deploy Atadflow on Kubernetes via Helm chart with production-ready Spark executi
 
 **Goal:** Create Helm chart with PostgreSQL as chart dependency
 **Depends on:** None
-**Plans:** 1 plan
+**Plans:** 1 plan (COMPLETE)
 
 Plans:
-- [ ] 01-01-PLAN.md — Create Helm chart with Bitnami PostgreSQL dependency, values.yaml, and templates
+- [x] 01-01-PLAN.md — Create Helm chart with Bitnami PostgreSQL dependency, values.yaml, and templates
 
 ---
 
@@ -24,7 +24,10 @@ Plans:
 
 **Goal:** Research production-ready Spark Connect solution
 **Depends on:** None  
-**Plans:** —
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — Finalize research with summary document
 
 ---
 
@@ -48,7 +51,7 @@ Plans:
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| HELM-01: Helm chart with PostgreSQL as chart dependency | Phase 1 | Pending |
+| HELM-01: Helm chart with PostgreSQL as chart dependency | Phase 1 | ✓ Complete |
 | HELM-02: Spark Connect production solution research | Phase 2 | Pending |
 | HELM-03: Kubernetes health probes using /q/health | Phase 3 | Pending |
 | HELM-04: Configurable resources via values.yaml | Phase 3 | Pending |
