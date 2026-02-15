@@ -1,0 +1,28 @@
+# Helm
+.git/
+.gitignore
+.circleci/
+build/
+.vscode/
+.idea/
+*.swp
+*.bak
+*.tmp
+*.orig
+
+# Documentation
+README.md
+CONTRIBUTING.md
+LICENSE
+
+# Development
+values-dev.yaml
+values-local.yaml
+
+# Testing
+*.test
+tests/
+
+# Chart files
+Chart.lock
+charts/
