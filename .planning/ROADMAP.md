@@ -1,6 +1,6 @@
 # Roadmap: Atadflow v1.2 Helm Chart Distribution
 
-**Status:** In Progress
+**Status:** Complete
 **Milestone:** v1.2 Helm Chart Distribution
 
 ## Overview
@@ -46,10 +46,10 @@ Plans:
 
 **Goal:** Integration test proving full-stack deployment on K8s with Spark execution, Telepresence docs
 **Depends on:** Phase 3
-**Plans:** 1 plan
+**Plans:** 1 plan (COMPLETE)
 
 Plans:
-- [ ] 04-01-PLAN.md — K8s integration test (external k3d + Spark K8s Operator + full lifecycle), Helm test hook, Telepresence README
+- [x] 04-01-PLAN.md — K8s integration test (external k3d + Spark K8s Operator + full lifecycle), Helm test hook, Telepresence README
 
 ---
 
@@ -61,8 +61,8 @@ Plans:
 | HELM-02: Spark Connect production solution research | Phase 2 | ✓ Complete |
 | HELM-03: Kubernetes health probes using /q/health | Phase 3 | ✓ Complete |
 | HELM-04: Configurable resources via values.yaml | Phase 3 | ✓ Complete |
-| HELM-05: K8s integration test | Phase 4 | Pending |
-| HELM-06: README Telepresence section | Phase 4 | Pending |
+| HELM-05: K8s integration test | Phase 4 | ✓ Complete |
+| HELM-06: README Telepresence section | Phase 4 | ✓ Complete |
 
 ---
 *Last updated: 2026-02-15*
