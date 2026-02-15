@@ -2,12 +2,12 @@
 
 ## Current Position
 
-Phase: 2 of 2 (spark-connect-production-research)
-Plan: 02-01 complete
+Phase: 3 of 4 (kubernetes-health-probes)
+Plan: 03-01 complete
 Status: Phase complete
-Last activity: 2026-02-15 — Completed 02-01-PLAN.md (Spark Connect production research)
+Last activity: 2026-02-15 — Completed 03-01-PLAN.md (Health probes verification)
 
-Progress: █ 2/2 phases
+Progress: ███░ 3/4 phases
 
 ## Project Reference
 
@@ -21,13 +21,16 @@ See: .planning/PROJECT.md (updated 2026-02-15)
 - v1.0 shipped: end-to-end Spark Connect execution with job lifecycle
 - v1.1 shipped: self-contained Docker distribution (670MB image, multi-stage Dockerfile)
 - v1.2 shipped: Helm chart with PostgreSQL dependency
-- v1.3 (current): Spark Connect production research completed
+- v1.3 shipped: Spark Connect production research completed
+- v1.4 (current): Kubernetes health probes verified
 - Docker Compose: postgres → spark-connect → atadflow with health ordering
 - Health checks: PythonLivenessCheck + SmallRye Health (/q/health/live, /q/health/ready)
 - 12 backend tests passing + 1 integration test (DockerComposeIntegrationTest)
 - PySpark 4.x quirk: query.stop() broken over Spark Connect, using spark.stop() instead
 - Helm chart requires `--dependency-update` flag for template rendering
 - Spark Connect production: Apache Spark K8s Operator v0.7.0+ recommended
+- Kubernetes health probes: Fully configured with production-ready defaults (60s liveness, 30s readiness initial delay)
+- Resource configurability: All probe timing and container resources externalized to values.yaml
 
 ## Decisions
 
@@ -42,6 +45,6 @@ See: .planning/PROJECT.md (updated 2026-02-15)
 ## Session
 
 Last session: 2026-02-15
-Stopped at: Phase 2 complete - Spark Connect production research finalized
-Resume file: None (milestone complete)
-Remaining plans: None (v1.3 milestone complete)
+Stopped at: Phase 3 complete - Kubernetes health probes verified
+Resume file: None (phase complete)
+Remaining plans: Phase 4 (K8s integration test & documentation)
