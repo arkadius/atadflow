@@ -23,7 +23,7 @@ Plans:
 ### Phase 2: Spark Connect Production Research
 
 **Goal:** Research production-ready Spark Connect solution
-**Depends on:** None  
+**Depends on:** None
 **Plans:** 1 plan (COMPLETE)
 
 Plans:
@@ -46,7 +46,10 @@ Plans:
 
 **Goal:** Integration test proving deployment works on K8s, README section on Telepresence
 **Depends on:** Phase 3
-**Plans:** —
+**Plans:** 1 plan
+
+Plans:
+- [ ] 04-01-PLAN.md — K8s integration test (Testcontainers K3s + Helm), Helm test hook, Telepresence README
 
 ---
 
