@@ -78,10 +78,70 @@ These are configured automatically as Kubernetes liveness and readiness probes.
 
 ## Testing
 
-Run the included test:
+### Helm Test (in-cluster)
+
+Run the included in-cluster smoke tests:
 
 ```bash
 helm test atadflow
+```
+
+This runs curl-based checks against health and API endpoints from inside the cluster.
+
+### K8s Integration Test (automated)
+
+A JUnit integration test deploys the full stack (Helm chart + Spark K8s Operator + Spark Connect) on a k3d cluster and verifies the complete application lifecycle including Spark job execution.
+
+```bash
+# Prerequisites
+k3d cluster create atadflow-test
+docker build -t atadflow/atadflow:1.2.0 .
+k3d image import atadflow/atadflow:1.2.0 -c atadflow-test
+
+# Run the test
+cd backend
+K8S_INTEGRATION_TEST=true ./gradlew test --tests KubernetesIntegrationTest
+
+# Cleanup
+helm uninstall atadflow -n atadflow-test
+kubectl delete namespace atadflow-test
+k3d cluster delete atadflow-test
+```
+
+Expected runtime: 3-5 minutes.
+
+## Local Development with Telepresence
+
+[Telepresence](https://www.getambassador.io/docs/telepresence) lets you run a local Quarkus dev instance that connects to cluster services (PostgreSQL, Spark Connect), enabling fast code iteration without rebuilding the Docker image.
+
+### Prerequisites
+
+- A running K8s cluster with the Atadflow Helm chart installed
+- [Telepresence 2.x](https://www.getambassador.io/docs/telepresence/latest/install) installed locally
+- Java 21+ and Gradle for local Quarkus dev mode
+
+### Workflow
+
+```bash
+# 1. Connect Telepresence to the cluster
+telepresence connect
+
+# 2. Intercept the atadflow service (routes cluster traffic to localhost:8080)
+telepresence intercept atadflow --port 8080:http
+
+# 3. Start Quarkus in dev mode (connects to cluster PostgreSQL and Spark via DNS)
+cd backend
+QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://atadflow-postgresql:5432/atadflow \
+QUARKUS_DATASOURCE_USERNAME=atadflow \
+QUARKUS_DATASOURCE_PASSWORD=<your-password> \
+SPARK_CONNECT_URL=sc://spark-connect:15002 \
+./gradlew quarkusDev
+
+# 4. Edit code — changes take effect immediately via Quarkus live reload
+
+# 5. End the intercept when done
+telepresence leave atadflow
+telepresence quit
 ```
 
 ## Upgrading

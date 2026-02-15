@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ printf "%s-test-api" (include "atadflow.fullname" .) | quote }}
+  labels:
+    {{- include "atadflow.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  activeDeadlineSeconds: 120
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.5.0
+      command:
+        - sh
+        - -c
+        - |
+          echo "Testing liveness endpoint..."
+          curl -f http://{{ include "atadflow.fullname" . }}:{{ .Values.service.port }}/q/health/live || exit 1
+
+          echo "Testing readiness endpoint..."
+          curl -f http://{{ include "atadflow.fullname" . }}:{{ .Values.service.port }}/q/health/ready || exit 1
+
+          echo "Testing node-types API..."
+          curl -f http://{{ include "atadflow.fullname" . }}:{{ .Values.service.port }}/api/node-types || exit 1
+
+          echo "Testing flows API..."
+          curl -f http://{{ include "atadflow.fullname" . }}:{{ .Values.service.port }}/api/flows || exit 1
+
+          echo "Verifying node types count..."
+          TYPES=$(curl -s http://{{ include "atadflow.fullname" . }}:{{ .Values.service.port }}/api/node-types | grep -o '"id"' | wc -l)
+          if [ "$TYPES" -ne "6" ]; then
+            echo "Expected 6 node types, got $TYPES"
+            exit 1
+          fi
+
+          echo "All tests passed!"
+      resources:
+        requests:
+          memory: "32Mi"
+          cpu: "50m"
+        limits:
+          memory: "64Mi"
+          cpu: "200m"
