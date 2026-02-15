@@ -35,7 +35,10 @@ Plans:
 
 **Goal:** Kubernetes health probes using existing /q/health endpoints, configurable resources via values.yaml
 **Depends on:** Phase 1
-**Plans:** —
+**Plans:** 1 plan (COMPLETE)
+
+Plans:
+- [x] 03-01-PLAN.md — Verify health probes and configurable resources
 
 ---
 
@@ -53,8 +56,8 @@ Plans:
 |-------------|-------|--------|
 | HELM-01: Helm chart with PostgreSQL as chart dependency | Phase 1 | ✓ Complete |
 | HELM-02: Spark Connect production solution research | Phase 2 | ✓ Complete |
-| HELM-03: Kubernetes health probes using /q/health | Phase 3 | Pending |
-| HELM-04: Configurable resources via values.yaml | Phase 3 | Pending |
+| HELM-03: Kubernetes health probes using /q/health | Phase 3 | ✓ Complete |
+| HELM-04: Configurable resources via values.yaml | Phase 3 | ✓ Complete |
 | HELM-05: K8s integration test | Phase 4 | Pending |
 | HELM-06: README Telepresence section | Phase 4 | Pending |
 
