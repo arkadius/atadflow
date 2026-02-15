@@ -26,6 +26,7 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter:1.20.1")
     testImplementation("org.testcontainers:postgresql:1.20.1")
     testImplementation("org.awaitility:awaitility:4.2.0")
+    testImplementation("io.fabric8:kubernetes-client:7.2.0")
 }
 
 group = "io.atadflow"
