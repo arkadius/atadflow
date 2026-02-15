@@ -227,7 +227,7 @@ public class KubernetesIntegrationTest {
 
     private static void deploySparkConnect() throws Exception {
         String sparkApp = """
-                apiVersion: sparkoperator.k8s.io/v1beta2
+                apiVersion: spark.apache.org/v1
                 kind: SparkApplication
                 metadata:
                   name: spark-connect-server
