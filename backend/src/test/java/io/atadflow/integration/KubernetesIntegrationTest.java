@@ -4,10 +4,11 @@ import io.fabric8.kubernetes.client.Config;
 import io.fabric8.kubernetes.client.ConfigBuilder;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import io.fabric8.kubernetes.client.KubernetesClientBuilder;
-import io.fabric8.kubernetes.client.LocalPortForward;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -22,9 +23,9 @@ import static org.hamcrest.Matchers.*;
  * Kubernetes integration test for Helm chart deployment with full Spark execution.
  *
  * Prerequisites:
- * 1. k3d cluster running: k3d cluster create atadflow-test
+ * 1. k3d cluster running: k3d cluster create
  * 2. Docker image built: docker build -t atadflow/atadflow:1.2.0 .
- * 3. Image loaded: k3d image import atadflow/atadflow:1.2.0 -c atadflow-test
+ * 3. Image loaded: k3d image import atadflow/atadflow:1.2.0
  * 4. Helm CLI installed
  *
  * Run with: K8S_INTEGRATION_TEST=true ./gradlew test --tests KubernetesIntegrationTest
@@ -42,7 +43,7 @@ public class KubernetesIntegrationTest {
     private static final String CHART_PATH = "../chart";
 
     private static KubernetesClient client;
-    private static LocalPortForward portForward;
+    private static Process portForwardProcess;
     private static String baseUrl;
 
     /**
@@ -79,13 +80,16 @@ public class KubernetesIntegrationTest {
                 .start()
                 .waitFor();
 
-        // 2. Install Apache Spark K8s Operator via Helm
+        // 2. Install Kubeflow Spark Operator via Helm
         System.out.println("Installing Spark K8s Operator...");
-        run("helm", "repo", "add", "spark-operator", "https://apache.github.io/spark-kubernetes-operator");
+        // Remove old repo if exists (from previous Apache Spark K8s Operator)
+        run("helm", "repo", "remove", "spark-operator");
+        run("helm", "repo", "add", "spark-operator", "https://kubeflow.github.io/spark-operator");
         run("helm", "repo", "update");
-        run("helm", "install", "spark-operator", "spark-operator/spark-kubernetes-operator",
+        run("helm", "install", "spark-operator", "spark-operator/spark-operator",
                 "--namespace", NAMESPACE,
-                "--wait", "--timeout", "3m");
+                "--create-namespace",
+                "--wait", "--timeout", "5m");
 
         // 3. Apply RBAC for Spark
         applySparkRbac();
@@ -111,9 +115,10 @@ public class KubernetesIntegrationTest {
 
         // 7. Install atadflow Helm chart
         System.out.println("Installing atadflow Helm chart...");
-        run("helm", "dependency", "update", CHART_PATH);
+        run("helm", "dependency", "build", CHART_PATH);
         run("helm", "install", RELEASE_NAME, CHART_PATH,
                 "--namespace", NAMESPACE,
+                "--dependency-update",
                 "--set", "postgresql.auth.password=testpass",
                 "--set", "image.pullPolicy=Never",
                 "--set", "spark.connectUrl=sc://spark-connect:15002",
@@ -131,13 +136,33 @@ public class KubernetesIntegrationTest {
                                 && d.getStatus().getReadyReplicas() > 0,
                         5, TimeUnit.MINUTES);
 
-        // 9. Set up port-forward for REST-Assured
+        // 9. Set up port-forward via kubectl (more reliable than Fabric8 port-forward)
         System.out.println("Setting up port-forward...");
-        portForward = client.services()
-                .inNamespace(NAMESPACE)
-                .withName(RELEASE_NAME)
-                .portForward(80);
-        baseUrl = "http://localhost:" + portForward.getLocalPort();
+        portForwardProcess = new ProcessBuilder(
+                "kubectl", "port-forward", "-n", NAMESPACE, "svc/" + RELEASE_NAME, "0:80")
+                .redirectErrorStream(true)
+                .start();
+
+        // Read the assigned local port from kubectl output (e.g. "Forwarding from 127.0.0.1:12345 -> 8080")
+        BufferedReader reader = new BufferedReader(new InputStreamReader(portForwardProcess.getInputStream()));
+        String line = reader.readLine();
+        System.out.println("Port-forward output: " + line);
+        int localPort = Integer.parseInt(line.replaceAll(".*:(\\d+) ->.*", "$1"));
+        baseUrl = "http://localhost:" + localPort;
+
+        // 10. Wait for app to respond through port-forward
+        System.out.println("Waiting for app to be reachable at " + baseUrl + "...");
+        await()
+                .atMost(Duration.ofMinutes(2))
+                .pollInterval(Duration.ofSeconds(3))
+                .ignoreExceptions()
+                .until(() -> {
+                    int status = given()
+                            .baseUri(baseUrl)
+                            .when().get("/q/health/live")
+                            .then().extract().statusCode();
+                    return status == 200;
+                });
         System.out.println("=== Test setup complete. Base URL: " + baseUrl + " ===");
     }
 
@@ -227,7 +252,7 @@ public class KubernetesIntegrationTest {
 
     private static void deploySparkConnect() throws Exception {
         String sparkApp = """
-                apiVersion: spark.apache.org/v1
+                apiVersion: sparkoperator.k8s.io/v1beta2
                 kind: SparkApplication
                 metadata:
                   name: spark-connect-server
@@ -302,9 +327,9 @@ public class KubernetesIntegrationTest {
             /* ignore */
         }
 
-        if (portForward != null) {
+        if (portForwardProcess != null) {
             try {
-                portForward.close();
+                portForwardProcess.destroyForcibly();
             } catch (Exception e) {
                 /* ignore */
             }
