@@ -21,6 +21,12 @@ spec:
       serviceAccountName: {{ include "atadflow.serviceAccountName" . }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.postgresql.enabled }}
+      initContainers:
+        - name: wait-for-postgresql
+          image: busybox:1.37
+          command: ['sh', '-c', 'until nc -z {{ .Release.Name }}-postgresql 5432; do echo "Waiting for PostgreSQL..."; sleep 2; done']
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -56,7 +62,7 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ .Release.Name }}-postgresql
-                  key: postgres-password
+                  key: password
             - name: SPARK_CONNECT_URL
               value: {{ .Values.spark.connectUrl | quote }}
           resources:
