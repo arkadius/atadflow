@@ -1,6 +1,6 @@
 # Roadmap: Atadflow v1.2 Helm Chart Distribution
 
-**Status:** In Progress
+**Status:** Complete
 **Milestone:** v1.2 Helm Chart Distribution
 
 ## Overview
@@ -57,10 +57,10 @@ Plans:
 
 **Goal:** Fix SparkApplication API version mismatch and verify integration test runs successfully
 **Depends on:** Phase 4
-**Plans:** 1 plan
+**Plans:** 1 plan (COMPLETE)
 
 Plans:
-- [ ] 05-01-PLAN.md — Fix API version (sparkoperator.k8s.io → spark.apache.org), run integration test on k3d cluster
+- [x] 05-01-PLAN.md — Fix Helm chart issues and verify integration test on k3d cluster
 
 ---
 
@@ -74,7 +74,7 @@ Plans:
 | HELM-04: Configurable resources via values.yaml | Phase 3 | ✓ Complete |
 | HELM-05: K8s integration test | Phase 4 | ✓ Complete |
 | HELM-06: README Telepresence section | Phase 4 | ✓ Complete |
-| HELM-05: K8s integration test (fixed) | Phase 5 | In Progress |
+| HELM-05: K8s integration test (verified on k3d) | Phase 5 | ✓ Complete |
 
 ---
-*Last updated: 2026-02-15*
+*Last updated: 2026-02-16*
