@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A visual streaming flow designer that lets users build Apache Spark Structured Streaming pipelines by connecting nodes in a DAG editor. Users drag source/transform/sink nodes, configure them, and execute the resulting PySpark code on a Spark Connect cluster — all without writing code.
+A visual streaming flow designer that lets users build Apache Spark Structured Streaming pipelines by connecting nodes in a DAG editor. Users drag source/transform/sink nodes, configure them, and execute the resulting PySpark code on a Spark Connect cluster — all without writing code. Deployable via Docker Compose or Helm chart on Kubernetes.
 
 ## Core Value
 
@@ -34,17 +34,16 @@ Users can visually design a streaming pipeline and execute it on Spark without w
 - ✓ Health checks (PythonLivenessCheck, /q/health endpoints) — v1.1
 - ✓ Docker Compose with health-based service ordering — v1.1
 - ✓ DockerComposeIntegrationTest (end-to-end deployment validation) — v1.1
+- ✓ Helm chart with Bitnami PostgreSQL as chart dependency — v1.2
+- ✓ Spark Connect production solution research (Kubeflow Spark Operator) — v1.2
+- ✓ Kubernetes health probes (/q/health/live, /q/health/ready) — v1.2
+- ✓ Configurable resources via values.yaml — v1.2
+- ✓ K8s integration test with full Spark execution on k3d — v1.2
+- ✓ Telepresence local development workflow documented — v1.2
 
 ### Active
 
-## Current Milestone: v1.2 Helm Chart Distribution
-
-**Goal:** Deploy Atadflow on Kubernetes via Helm chart with proper resource management and production-ready configuration.
-
-**Target features:**
-- Helm chart for Kubernetes deployment (Atadflow + PostgreSQL + Spark Connect)
-- Configurable resources, replicas, and environment via values.yaml
-- Kubernetes health probes using existing /q/health endpoints
+(None — planning next milestone)
 
 ### Out of Scope
 
@@ -55,15 +54,16 @@ Users can visually design a streaming pipeline and execute it on Spark without w
 
 ## Context
 
-Shipped v1.1 with self-contained Docker distribution (670MB image).
+Shipped v1.2 with Helm chart distribution for Kubernetes.
 
 - Backend: Java 25, Quarkus 3.31.2, Gradle 9.3.1 (Kotlin DSL), PostgreSQL 16
 - Frontend: TypeScript, React 19, Vite 7, @xyflow/react, @monaco-editor/react
-- Spark Connect server: apache/spark:4.0.2 in Docker Compose (port 15002)
-- Multi-stage Dockerfile with frontend bundled into backend JAR
+- Spark Connect server: apache/spark:4.0.2 (Docker Compose or Kubeflow Spark Operator on K8s)
+- Multi-stage Dockerfile with frontend bundled into backend JAR (670MB)
 - Health checks: PythonLivenessCheck + SmallRye Health endpoints
 - Docker Compose: postgres → spark-connect → atadflow with health ordering
-- 12 backend tests passing + 1 integration test (DockerComposeIntegrationTest)
+- Helm chart: Bitnami PostgreSQL subchart, configurable resources, health probes
+- 12 backend tests + 2 integration tests (DockerComposeIntegrationTest, KubernetesIntegrationTest)
 
 ## Constraints
 
@@ -86,6 +86,11 @@ Shipped v1.1 with self-contained Docker distribution (670MB image).
 | useEffect cleanup pattern for polling | Simpler lifecycle handling, automatic cleanup | ✓ Good |
 | Multi-stage Dockerfile (670MB) | All deps in one image, no external Python install needed | ✓ Good |
 | Frontend bundled in META-INF/resources/ | Single artifact deployment, SPA routing via Vert.x filter | ✓ Good |
+| Bitnami PostgreSQL as Helm subchart | Production-hardened, HTTPS repo for compatibility | ✓ Good |
+| Kubeflow Spark Operator for K8s integration test | Stable Helm chart, well-known CRDs | ✓ Good |
+| kubectl port-forward over Fabric8 LocalPortForward | Fabric8 was unreliable (NoHttpResponseException) | ✓ Good |
+| busybox init container for PostgreSQL readiness | Prevents CrashLoopBackOff during slow DB startup | ✓ Good |
+| External k3d cluster for integration testing | User preference, not Testcontainers | ✓ Good |
 
 ---
-*Last updated: 2026-02-15 after v1.2 milestone start*
+*Last updated: 2026-02-17 after v1.2 milestone*

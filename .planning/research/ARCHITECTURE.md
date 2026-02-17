@@ -1,740 +1,807 @@
-# Architecture Research: Spark Connect Integration
+# Architecture Patterns: Helm Chart Kubernetes Distribution
 
-**Domain:** Spark Connect integration for streaming flow submission and monitoring
-**Researched:** 2026-02-08
+**Domain:** Helm chart deployment for existing Docker-based Quarkus + React application
+**Researched:** 2026-02-15
 **Confidence:** HIGH
 
 ## Executive Summary
 
-Spark Connect integration for Atadflow requires transitioning from stub submission to real Spark job execution using **spark-submit with PySpark scripts**, not the Spark Connect client library. The backend will write generated Python code to temporary files and submit them via ProcessBuilder executing spark-submit commands. Job status tracking will use the Spark REST API (not Spark Connect gRPC) for polling application state. Submission must be asynchronous using Quarkus ManagedExecutor to avoid blocking HTTP threads. No Python process or Spark Connect Java client is needed — communication is entirely through subprocess execution (spark-submit) and HTTP polling (REST API).
+This architecture research focuses on integrating Helm chart Kubernetes deployment with Atadflow's existing Docker-based architecture (Quarkus backend, React frontend, PostgreSQL persistence, Spark Connect execution). The migration maintains the existing multi-stage Dockerfile but adapts deployment from Docker Compose to Kubernetes with Helm templating, PostgreSQL subchart integration, and two viable Spark Connect deployment options.
 
-## System Overview
+**Key findings:**
+1. Helm charts conventionally live in `helm/` or `charts/` at project root
+2. Existing Dockerfile maps cleanly to K8s Deployment with minimal changes
+3. Bitnami PostgreSQL subchart (v12.5.8+) provides production-ready database with service DNS
+4. Spark Connect has two viable K8s options: Spark Operator (scalable) vs Simple Deployment (simpler)
+5. Integration tests use `kubectl port-forward` + existing test harness
+6. Telepresence intercepts traffic to Quarkus pod, Python subprocess execution unaffected
+7. Build order: Helm structure → PostgreSQL → Spark Connect → Atadflow deployment → Integration tests → Telepresence docs
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Frontend (React)                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ FlowCanvas   │  │ JobMonitor   │  │ JobStatus    │      │
-│  │ (design)     │  │ (polling)    │  │ (display)    │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                  │                  │              │
-├─────────┴──────────────────┴──────────────────┴──────────────┤
-│                   Quarkus REST API                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ FlowResource │  │ JobResource  │  │ NodeType     │      │
-│  │              │  │              │  │ Resource     │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────┘      │
-│         │                  │                                 │
-├─────────┴──────────────────┴─────────────────────────────────┤
-│                     Service Layer                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ FlowService  │  │ JobService   │  │ CodeGen      │      │
-│  │              │  │              │  │ Service      │      │
-│  └──────────────┘  └──────┬───────┘  └──────┬───────┘      │
-│                            │                  │              │
-│         NEW ────> ┌────────┴──────────────────┴───────┐     │
-│                   │   SparkSubmissionService           │     │
-│                   │ ┌────────────┐ ┌────────────────┐ │     │
-│                   │ │ Submission │ │ StatusPolling  │ │     │
-│                   │ │  (async)   │ │   (REST API)   │ │     │
-│                   │ └─────┬──────┘ └────────┬───────┘ │     │
-│                   └───────┼──────────────────┼─────────┘     │
-├───────────────────────────┼──────────────────┼───────────────┤
-│                 Infrastructure                │               │
-│  ┌──────────────┐  ┌─────┴──────┐  ┌─────────┴────────┐    │
-│  │ PostgreSQL   │  │ Process    │  │ HTTP Client      │    │
-│  │ (metadata)   │  │ Builder    │  │ (REST polling)   │    │
-│  └──────────────┘  └─────┬──────┘  └──────────────────┘    │
-│                           │                                  │
-├───────────────────────────┼──────────────────────────────────┤
-│              External: Spark Environment                     │
-│  ┌────────────────────────┴───────────────────────────┐     │
-│  │ Spark (Docker)                                      │     │
-│  │ ┌─────────────────┐  ┌──────────────────────────┐  │     │
-│  │ │ spark-submit    │  │ REST API :4040 or :18080 │  │     │
-│  │ │ (entry point)   │  │ (status monitoring)      │  │     │
-│  │ └────────┬────────┘  └──────────────────────────┘  │     │
-│  │          │                                          │     │
-│  │  ┌───────┴─────────┐                               │     │
-│  │  │ Spark Master    │                               │     │
-│  │  │ + Workers       │                               │     │
-│  │  └─────────────────┘                               │     │
-│  └─────────────────────────────────────────────────────┘     │
-└─────────────────────────────────────────────────────────────┘
-```
+## Recommended Architecture
 
-## Component Responsibilities
-
-| Component | Responsibility | Implementation |
-|-----------|----------------|----------------|
-| **JobResource** | HTTP endpoints for job operations | Already exists — no changes needed |
-| **JobService** | Job lifecycle orchestration | Modify: make submitJob async, add status refresh endpoint |
-| **SparkSubmissionService** | Spark job submission and monitoring | Replace stub: implement spark-submit + REST polling |
-| **CodeGenerationService** | Generate PySpark code from flow | Already exists — no changes needed |
-| **Job entity** | Job metadata persistence | Extend: add lastPolledAt, sparkRestUrl fields |
-| **ManagedExecutor** | Async task execution | NEW: inject for async submission |
-| **ProcessBuilder** | External process execution | NEW: execute spark-submit commands |
-| **HTTP client** | REST API polling | NEW: query Spark REST API for status |
-| **Spark (Docker)** | Job execution environment | NEW: docker-compose with spark-submit + REST API |
-
-## Integration Architecture
-
-### Existing vs Modified vs New
-
-#### Existing Components (No Changes)
-- **FlowResource, FlowService, FlowMapper**: Flow management is stable
-- **CodeGenerationService**: Already generates valid PySpark code
-- **NodeTypeRegistry, BuiltInNodeTypeProvider**: Node type system is stable
-- **JobResource endpoints**: `/api/jobs` GET/POST/cancel are sufficient
-- **Job entity core fields**: id, flow, status, timestamps are sufficient
-
-#### Modified Components (Enhanced)
-1. **JobService.submitJob()**
-   - **Before:** Synchronous submission, waits for stub
-   - **After:** Async submission via ManagedExecutor, returns immediately with PENDING status
-   - **Change:** Add `@Inject ManagedExecutor executor` and wrap submission in `executor.runAsync()`
-
-2. **SparkSubmissionService** (complete rewrite)
-   - **Before:** Stub setting status to SUBMITTED with fake sparkAppId
-   - **After:**
-     - Write code to temp file
-     - Execute spark-submit via ProcessBuilder
-     - Parse application ID from output
-     - Return async (don't wait for completion)
-   - **New methods:**
-     - `submit(Job, String code)` — async spark-submit execution
-     - `pollStatus(Job)` — query Spark REST API for current status
-     - `cancel(Job)` — kill application via REST API or spark-submit --kill
-
-3. **Job entity**
-   - **Add fields:**
-     - `lastPolledAt` (LocalDateTime) — track when status was last updated
-     - `sparkRestUrl` (String) — store REST API endpoint for this job
-   - **Rationale:** Enable efficient polling and direct status queries
-
-4. **JobService** (new method)
-   - **Add:** `refreshJobStatus(UUID jobId)`
-   - **Purpose:** Trigger status poll on-demand (called by frontend polling)
-   - **Returns:** Updated JobDto
-
-#### New Components
-
-1. **Quarkus dependencies**
-   - `io.quarkus:quarkus-rest-client-reactive` — for REST API polling
-   - No Spark Connect client needed
-
-2. **SparkRestClient** (REST interface)
-   ```java
-   @RegisterRestClient(configKey = "spark-rest")
-   public interface SparkRestClient {
-       @GET
-       @Path("/api/v1/applications/{appId}")
-       ApplicationInfo getApplication(@PathParam("appId") String appId);
-
-       @GET
-       @Path("/api/v1/applications/{appId}/jobs")
-       List<JobInfo> getJobs(@PathParam("appId") String appId);
-   }
-   ```
-
-3. **Temp file management**
-   - Use `Files.createTempFile("atadflow-", ".py")` for script storage
-   - Clean up after submission (or on failure)
-
-4. **Docker Compose spark service**
-   ```yaml
-   spark:
-     image: apache/spark:3.5.7
-     ports:
-       - "4040:4040"  # Web UI / REST API
-       - "7077:7077"  # Master
-     command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-   ```
-
-## Data Flow
-
-### Job Submission Flow
+### Project Structure
 
 ```
-[POST /api/jobs]
-    |
-    v
-JobResource.submit()
-    |
-    v
-JobService.submitJob()
-    |
-    +---> CodeGenerationService.generateCode(flow)
-    |     returns: String pythonCode
-    |
-    +---> Job.persist() with status=PENDING
-    |
-    +---> ManagedExecutor.runAsync(() -> {
-              SparkSubmissionService.submit(job, code)
-          })
-          |
-          v
-    [Return JobDto immediately with PENDING status]
-
-
---- ASYNC BOUNDARY ---
-
-
-SparkSubmissionService.submit(job, code)
-    |
-    +---> Write code to temp file: /tmp/atadflow-<uuid>.py
-    |
-    +---> ProcessBuilder.command(
-            "spark-submit",
-            "--master", "spark://localhost:7077",
-            "--deploy-mode", "client",
-            "/tmp/atadflow-<uuid>.py"
-          )
-    |
-    +---> process.start()
-    |
-    +---> Read process output stream to extract:
-    |     "Submitted application application_1234567890_0001"
-    |
-    +---> Update Job:
-    |     - sparkAppId = "application_1234567890_0001"
-    |     - status = SUBMITTED
-    |     - sparkRestUrl = "http://localhost:4040"
-    |     - startedAt = now()
-    |
-    +---> Delete temp file
-    |
-    v
-[Spark job running independently]
+atadflow/
+├── backend/
+├── frontend/
+├── Dockerfile                 # UNCHANGED - reused by K8s
+├── docker-compose.yml         # KEPT - local dev option
+├── helm/
+│   └── atadflow/
+│       ├── Chart.yaml         # Metadata + dependencies
+│       ├── values.yaml        # Configuration defaults
+│       ├── templates/
+│       │   ├── deployment.yaml
+│       │   ├── service.yaml
+│       │   ├── configmap.yaml
+│       │   ├── secret.yaml    # DB credentials
+│       │   ├── _helpers.tpl   # Reusable template functions
+│       │   └── NOTES.txt      # Post-install instructions
+│       └── charts/            # Downloaded dependencies (gitignored)
+└── k8s-integration-tests/     # NEW - kubectl-based tests
 ```
 
-### Status Polling Flow
+**Rationale:** Standard Helm structure per [official charts documentation](https://helm.sh/docs/topics/charts/). `helm/` directory at root is conventional for projects with Helm as secondary concern (Docker is primary). Chart dependencies downloaded to `charts/` subdirectory.
 
-```
-[GET /api/jobs/{id}]
-    |
-    v
-JobResource.get(id)
-    |
-    v
-JobService.getJob(id)
-    |
-    +---> if (job.status in [SUBMITTED, RUNNING]) {
-    |         SparkSubmissionService.pollStatus(job)
-    |     }
-    |
-    v
-SparkSubmissionService.pollStatus(job)
-    |
-    +---> GET {sparkRestUrl}/api/v1/applications/{sparkAppId}
-    |     |
-    |     +---> 200 OK → application still exists
-    |     |     Read response:
-    |     |     { "id": "...", "name": "...", "attempts": [...] }
-    |     |     attempts[0].completed = false → RUNNING
-    |     |     attempts[0].completed = true → check jobs API
-    |     |
-    |     +---> 404 Not Found → check history server
-    |           GET http://localhost:18080/api/v1/applications/{sparkAppId}
-    |           |
-    |           +---> 200 OK → completed, check attempts[0].completed
-    |           |     attempt.completionTime exists → SUCCEEDED or FAILED
-    |           |     Check jobs API for failures
-    |           |
-    |           +---> 404 → status = FAILED (app not found anywhere)
-    |
-    +---> GET {sparkRestUrl}/api/v1/applications/{sparkAppId}/jobs
-    |     Check if any job has status = "FAILED"
-    |     If yes → job.status = FAILED, errorMessage = first failure
-    |     If all succeeded → job.status = SUCCEEDED
-    |
-    +---> Update Job entity:
-    |     - status = [new status]
-    |     - lastPolledAt = now()
-    |     - finishedAt = (if terminal state)
-    |     - errorMessage = (if failed)
-    |
-    v
-[Return updated JobDto]
-```
+**Confidence:** HIGH - Verified against [Helm best practices](https://helm.sh/docs/chart_best_practices/) and [2026 Helm guide](https://devtoolbox.dedyn.io/blog/helm-charts-complete-guide).
 
-### Frontend Polling Pattern
+---
 
-```
-JobMonitor component (React)
-    |
-    +---> useEffect(() => {
-            const interval = setInterval(() => {
-                if (job.status in ['PENDING', 'SUBMITTED', 'RUNNING']) {
-                    fetch(`/api/jobs/${job.id}`)
-                        .then(updateJobState)
-                }
-            }, 5000)  // Poll every 5 seconds
+## Component Integration Mapping
 
-            return () => clearInterval(interval)
-          }, [job.status])
-```
+### 1. Dockerfile → Kubernetes Deployment
 
-## Architectural Patterns
+**Existing Dockerfile:**
+- Multi-stage build: Node 22 → Gradle/JDK 25 → JRE 25 + Python 3.12
+- Final image: 670MB with Quarkus + PySpark + frontend bundled
+- HEALTHCHECK: `curl -f http://localhost:8080/q/health/live`
+- Exposed port: 8080
 
-### Pattern 1: Async Fire-and-Forget Submission
-
-**What:** Submit Spark job asynchronously without blocking HTTP request
-**When to use:** Long-running job submission (spark-submit can take 5-30 seconds to start)
-**Trade-offs:**
-- PRO: HTTP requests return immediately, no timeout issues
-- PRO: Server can handle multiple concurrent submissions
-- CON: Requires polling for status updates
-- CON: Error handling is delayed (not immediate in response)
-
-**Example:**
-```java
-@ApplicationScoped
-public class JobService {
-    @Inject ManagedExecutor executor;
-    @Inject SparkSubmissionService sparkSubmission;
-
-    @Transactional
-    public JobDto submitJob(SubmitJobRequest request) {
-        // Generate code and create Job entity synchronously
-        String code = codeGenerationService.generateCode(flowDto);
-        Job job = new Job();
-        job.status = JobStatus.PENDING;
-        job.persist();
-
-        // Submit to Spark asynchronously
-        executor.runAsync(() -> {
-            try {
-                sparkSubmission.submit(job, code);
-            } catch (Exception e) {
-                updateJobFailure(job, e);
-            }
-        });
-
-        return mapper.toDto(job);  // Return immediately with PENDING
-    }
-}
-```
-
-### Pattern 2: REST API Polling with Fallback
-
-**What:** Poll active Spark REST API first, fall back to history server if 404
-**When to use:** Jobs transition from running (4040) to completed (18080)
-**Trade-offs:**
-- PRO: Always finds job status regardless of completion state
-- PRO: No need to know completion state in advance
-- CON: Two HTTP calls when job completes (first 404, then history server)
-- CON: Relies on history server being configured
-
-**Example:**
-```java
-public void pollStatus(Job job) {
-    try {
-        // Try active application REST API first
-        ApplicationInfo app = restClient.getApplication(job.sparkAppId);
-        updateStatusFromActiveApp(job, app);
-    } catch (WebApplicationException e) {
-        if (e.getResponse().getStatus() == 404) {
-            // App finished, check history server
-            try {
-                ApplicationInfo app = historyClient.getApplication(job.sparkAppId);
-                updateStatusFromCompletedApp(job, app);
-            } catch (WebApplicationException e2) {
-                // Not found anywhere
-                job.status = JobStatus.FAILED;
-                job.errorMessage = "Application not found in history";
-            }
-        }
-    }
-}
-```
-
-### Pattern 3: ProcessBuilder with Output Parsing
-
-**What:** Execute spark-submit as subprocess and parse stdout for application ID
-**When to use:** No Spark Connect client available, need spark-submit compatibility
-**Trade-offs:**
-- PRO: Works with any Spark deployment (Standalone, YARN, K8s)
-- PRO: No additional dependencies beyond Spark installation
-- PRO: Matches standard spark-submit workflow
-- CON: Requires parsing text output (fragile if format changes)
-- CON: Must handle process lifecycle (cleanup, timeout)
-
-**Example:**
-```java
-public void submit(Job job, String code) throws IOException {
-    // Write code to temp file
-    Path scriptPath = Files.createTempFile("atadflow-", ".py");
-    Files.writeString(scriptPath, code);
-
-    // Build spark-submit command
-    ProcessBuilder pb = new ProcessBuilder(
-        "spark-submit",
-        "--master", sparkMasterUrl,
-        "--deploy-mode", "client",
-        "--name", "Atadflow-" + job.id,
-        scriptPath.toString()
-    );
-    pb.redirectErrorStream(true);
-
-    // Start process and capture output
-    Process process = pb.start();
-    BufferedReader reader = new BufferedReader(
-        new InputStreamReader(process.getInputStream())
-    );
-
-    // Parse application ID from output
-    String line;
-    String appId = null;
-    while ((line = reader.readLine()) != null) {
-        if (line.contains("Submitted application")) {
-            appId = extractAppId(line);  // Parse "application_xxx"
-            break;
-        }
-    }
-
-    // Update job with app ID
-    job.sparkAppId = appId;
-    job.status = JobStatus.SUBMITTED;
-    job.persist();
-
-    // Clean up
-    Files.deleteIfExists(scriptPath);
-}
-```
-
-### Pattern 4: Transactional Status Updates
-
-**What:** Update job status within transactions to ensure consistency
-**When to use:** Status polling and async callbacks that modify Job entities
-**Trade-offs:**
-- PRO: Prevents lost updates from concurrent polling
-- PRO: Database reflects accurate state
-- CON: Requires careful transaction boundaries in async code
-
-**Example:**
-```java
-@Transactional
-public void updateJobStatusFromPoll(UUID jobId) {
-    Job job = Job.findById(jobId);
-    if (job == null) return;
-
-    // Poll external state
-    pollStatus(job);
-
-    // Persist within same transaction
-    job.lastPolledAt = LocalDateTime.now();
-    job.persist();
-}
-```
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Synchronous spark-submit in HTTP Request
-
-**What people do:** Call ProcessBuilder.start().waitFor() directly in JobService.submitJob()
-**Why it's wrong:**
-- Blocks HTTP thread for 10-60 seconds during Spark startup
-- Can cause request timeouts
-- Prevents concurrent job submissions
-**Do this instead:** Use ManagedExecutor.runAsync() to submit in background thread
-
-### Anti-Pattern 2: Using Spark Connect gRPC Client
-
-**What people do:** Try to use spark-connect-client-jvm to submit PySpark code
-**Why it's wrong:**
-- Spark Connect is for DataFrame API in client languages (Python, Scala)
-- No Java API for submitting arbitrary PySpark scripts
-- Designed for interactive sessions, not job submission
-**Do this instead:** Use spark-submit via ProcessBuilder (standard submission mechanism)
-
-### Anti-Pattern 3: Polling Every Request
-
-**What people do:** Call pollStatus() on every GET /api/jobs/{id} regardless of status
-**Why it's wrong:**
-- Wastes HTTP calls to Spark REST API for completed jobs
-- Adds 50-200ms latency to every status check
-- Can overwhelm Spark REST API with requests
-**Do this instead:** Only poll when status is SUBMITTED or RUNNING, cache terminal states
-
-### Anti-Pattern 4: No Python Environment
-
-**What people do:** Assume backend needs embedded Python interpreter or py4j
-**Why it's wrong:**
-- spark-submit handles Python execution internally
-- Backend only generates Python code as strings
-- Adding Python dependencies complicates deployment
-**Do this instead:** Generate Python code, write to file, exec spark-submit — Spark handles Python
-
-### Anti-Pattern 5: Blocking on Application Completion
-
-**What people do:** Wait for Spark application to finish before returning from submit()
-**Why it's wrong:**
-- Streaming jobs run indefinitely (spark.streams.awaitAnyTermination())
-- Would block forever
-- Defeats purpose of async submission
-**Do this instead:** Return immediately after getting sparkAppId, poll status separately
-
-## Scaling Considerations
-
-| Scale | Architecture Adjustments |
-|-------|--------------------------|
-| 1-10 concurrent jobs | Current approach: single Spark cluster, PostgreSQL, sync polling per request |
-| 10-100 concurrent jobs | Add: Background status poller (scheduled task updates all RUNNING jobs every 10s), reduce per-request polling |
-| 100-1000 concurrent jobs | Add: Separate Spark clusters (by tenant or workload), job queue with priority, Redis cache for status |
-
-### Scaling Priorities
-
-1. **First bottleneck: Frontend polling overhead**
-   - **Symptom:** Many browser tabs polling /api/jobs/{id} every 5 seconds
-   - **Fix:** Server-side polling — scheduled task updates all running jobs, frontend queries cached state
-   - **Implementation:** Quarkus @Scheduled method polls all RUNNING/SUBMITTED jobs every 10s
-
-2. **Second bottleneck: Spark cluster saturation**
-   - **Symptom:** Jobs queued, submissions slow, resource contention
-   - **Fix:** Resource limits (max concurrent streams), job queuing, multiple Spark clusters
-   - **Implementation:** Add `max_concurrent_jobs` config, return 429 Too Many Requests when limit reached
-
-3. **Third bottleneck: PostgreSQL status updates**
-   - **Symptom:** Lock contention on Job table during polling spikes
-   - **Fix:** Cache job status in Redis, batch status updates
-   - **Implementation:** Redis cache with TTL, only write to PostgreSQL on state transitions
-
-## Integration Points
-
-### External Services
-
-| Service | Integration Pattern | Notes |
-|---------|---------------------|-------|
-| **Spark (spark-submit)** | ProcessBuilder subprocess execution | Master URL from config (spark://localhost:7077 for local) |
-| **Spark REST API** | Quarkus REST Client (Reactive) | Dynamic URL per job (4040 for running, 18080 for history) |
-| **Spark History Server** | Quarkus REST Client (Reactive) | Fallback when active API returns 404 |
-| **Docker Compose** | External orchestration | Spark master/workers, backend connects via localhost ports |
-
-### Internal Boundaries
-
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| **JobService → SparkSubmissionService** | Direct method call (sync), wrapped in ManagedExecutor (async) | JobService orchestrates, SparkSubmissionService executes |
-| **SparkSubmissionService → ProcessBuilder** | JDK subprocess API | Error handling: capture stderr, parse exit codes |
-| **SparkSubmissionService → SparkRestClient** | HTTP REST (reactive) | Inject @RestClient interface, configure base URL |
-| **Frontend → JobResource** | HTTP polling (GET /api/jobs/{id}) | 5 second interval for active jobs, stop when terminal |
-
-## Component Implementation Details
-
-### SparkSubmissionService Implementation Strategy
-
-**Submit Method:**
-1. Write Python code to temp file
-2. Build ProcessBuilder with spark-submit command
-3. Start process and read stdout in separate thread (ManagedExecutor)
-4. Parse "Submitted application app_xxx" from output
-5. Update Job entity with sparkAppId, status=SUBMITTED
-6. Return (don't wait for completion)
-
-**PollStatus Method:**
-1. Check if status is terminal (SUCCEEDED, FAILED, CANCELLED) — skip if yes
-2. Call Spark REST API GET /api/v1/applications/{sparkAppId}
-3. If 404: try history server GET /api/v1/applications/{sparkAppId}
-4. Parse application state: attempts[0].completed, attempts[0].completionTime
-5. If completed: call GET /api/v1/applications/{sparkAppId}/jobs to check for failures
-6. Update Job status, finishedAt, errorMessage based on results
-7. Set lastPolledAt = now()
-
-**Cancel Method:**
-1. Option A: REST API DELETE (if available in Spark version)
-2. Option B: spark-submit --kill {sparkAppId} --master {masterUrl}
-3. Update Job status = CANCELLED, finishedAt = now()
-
-### Job Entity Schema Changes
-
-```sql
-ALTER TABLE job ADD COLUMN last_polled_at TIMESTAMP;
-ALTER TABLE job ADD COLUMN spark_rest_url VARCHAR(255);
-
--- Index for efficient polling queries
-CREATE INDEX idx_job_status_active ON job(status)
-WHERE status IN ('SUBMITTED', 'RUNNING');
-```
-
-### Configuration Properties
-
-```properties
-# application.properties
-spark.master.url=spark://localhost:7077
-spark.rest.url=http://localhost:4040
-spark.history.url=http://localhost:18080
-spark.submit.path=/opt/spark/bin/spark-submit
-
-# Max concurrent running jobs (optional scaling feature)
-spark.max.concurrent.jobs=50
-```
-
-### Docker Compose Configuration
+**Kubernetes Deployment Mapping:**
 
 ```yaml
-services:
-  postgres:
-    image: postgres:16
-    # ... existing config
-
-  backend:
-    # ... existing config
-    depends_on:
-      - postgres
-      - spark-master
-    environment:
-      SPARK_MASTER_URL: spark://spark-master:7077
-      SPARK_REST_URL: http://spark-master:4040
-
-  spark-master:
-    image: apache/spark:3.5.7
-    ports:
-      - "4040:4040"  # Web UI / REST API
-      - "7077:7077"  # Master
-      - "18080:18080"  # History server
-    command: >
-      bash -c "
-      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master &
-      /opt/spark/sbin/start-history-server.sh &
-      wait
-      "
-    volumes:
-      - spark-logs:/opt/spark/logs
-
-  spark-worker:
-    image: apache/spark:3.5.7
-    depends_on:
-      - spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker spark://spark-master:7077
-
-volumes:
-  spark-logs:
+# helm/atadflow/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atadflow.fullname" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "atadflow.name" . }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "atadflow.name" . }}
+    spec:
+      containers:
+      - name: atadflow
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        env:
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://{{ include "atadflow.postgresql.fullname" . }}:5432/{{ .Values.postgresql.auth.database }}"
+        - name: QUARKUS_DATASOURCE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "atadflow.fullname" . }}-db
+              key: username
+        - name: QUARKUS_DATASOURCE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "atadflow.fullname" . }}-db
+              key: password
+        - name: SPARK_CONNECT_URL
+          value: "{{ .Values.spark.connectUrl }}"
+        - name: PYTHON_EXECUTABLE
+          value: "python3"
+        livenessProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /q/health/ready
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /q/health/live
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12
+        resources:
+          {{- toYaml .Values.resources | nindent 10 }}
 ```
 
-## Build Order Recommendations
+**Key mappings:**
+- Dockerfile `HEALTHCHECK` → `livenessProbe` (existing `/q/health/live` endpoint)
+- SmallRye Health → `readinessProbe` (existing `/q/health/ready` endpoint)
+- New `startupProbe` → handles initial 60s startup period (PythonLivenessCheck takes time)
+- Dockerfile `EXPOSE 8080` → `containerPort: 8080`
+- Docker Compose `environment:` → K8s `env:` with ConfigMap/Secret references
 
-Based on dependencies and integration complexity:
+**Health Probe Types:**
+Per [Kubernetes documentation](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/):
+- **Liveness:** Detects deadlocks, triggers restart (maps to existing PythonLivenessCheck)
+- **Readiness:** Controls traffic routing, removes pod from service if failing
+- **Startup:** Protects slow-starting containers (60s for Python/PySpark initialization)
 
-### Phase 1: Foundation (Spark Environment)
-1. **Docker Compose setup** — Spark master, worker, history server
-   - No code changes, pure infrastructure
-   - Validates Spark installation and networking
-   - Test: `docker-compose up`, verify Web UI at localhost:4040
+**Confidence:** HIGH - Direct mapping from existing Docker health checks to K8s probes. [Quarkus SmallRye Health](https://quarkus.io/guides/smallrye-health) already provides `/q/health/live` and `/q/health/ready` endpoints.
 
-2. **Configuration properties** — Add spark.* config to application.properties
-   - Simple property additions
-   - Test: config values injectable via @ConfigProperty
+---
 
-### Phase 2: Submission (Core Integration)
-3. **Job entity enhancements** — Add lastPolledAt, sparkRestUrl fields
-   - Database schema migration (Liquibase/Flyway)
-   - Simple entity changes
-   - Test: Unit test entity persistence with new fields
+### 2. PostgreSQL Subchart Integration
 
-4. **ProcessBuilder spike** — Proof of concept: write temp file, exec spark-submit, parse output
-   - Standalone test (not integrated)
-   - Validates spark-submit available, output parseable
-   - Test: Execute spark-submit with sample PySpark script, extract appId
+**Existing Docker Compose:**
+```yaml
+postgres:
+  image: postgres:16
+  environment:
+    POSTGRES_DB: atadflow
+    POSTGRES_USER: atadflow
+    POSTGRES_PASSWORD: atadflow
+  # atadflow connects via: jdbc:postgresql://postgres:5432/atadflow
+```
 
-5. **SparkSubmissionService.submit()** — Implement real submission logic
-   - Replace stub with ProcessBuilder implementation
-   - Synchronous first (async added next)
-   - Test: Integration test submits job, verifies sparkAppId populated
+**Helm Chart Integration:**
 
-6. **ManagedExecutor async wrapper** — Make JobService.submitJob() async
-   - Inject ManagedExecutor, wrap submit() call
-   - Test: Verify HTTP request returns before Spark job starts
+**Chart.yaml:**
+```yaml
+apiVersion: v2
+name: atadflow
+version: 0.1.0
+appVersion: "1.2.0"
+dependencies:
+- name: postgresql
+  version: ~12.5.8
+  repository: https://charts.bitnami.com/bitnami
+  condition: postgresql.enabled
+```
 
-### Phase 3: Monitoring (Status Tracking)
-7. **SparkRestClient interface** — Define REST client for Spark API
-   - Quarkus @RegisterRestClient interface
-   - ApplicationInfo, JobInfo DTOs
-   - Test: Mock REST client, verify DTO parsing
+**values.yaml:**
+```yaml
+postgresql:
+  enabled: true
+  auth:
+    username: atadflow
+    password: atadflow  # Override in production
+    database: atadflow
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+```
 
-8. **SparkSubmissionService.pollStatus()** — Implement REST API polling
-   - Call Spark REST API, parse response
-   - Update Job entity based on state
-   - Test: Integration test with mock REST responses
+**Service DNS Resolution:**
+Kubernetes creates a Service for the PostgreSQL pod. Service DNS follows pattern: `<release-name>-postgresql.<namespace>.svc.cluster.local` (short form: `<release-name>-postgresql`).
 
-9. **JobService.refreshJobStatus()** — Add manual refresh endpoint
-   - Called by JobResource.get() for active jobs
-   - Test: Verify status updated when called
+**Application Connection:**
+```yaml
+# In deployment.yaml env section
+- name: DATABASE_URL
+  value: "jdbc:postgresql://{{ include "atadflow.postgresql.fullname" . }}:5432/{{ .Values.postgresql.auth.database }}"
+```
 
-10. **Frontend polling** — Add useEffect interval polling in React
-    - Poll every 5s for PENDING/SUBMITTED/RUNNING jobs
-    - Test: Manual verification in browser
+The `atadflow.postgresql.fullname` helper generates: `{{ .Release.Name }}-postgresql` (e.g., `atadflow-postgresql` for `helm install atadflow ./helm/atadflow`).
 
-### Phase 4: Lifecycle (Cancel, Failure Handling)
-11. **SparkSubmissionService.cancel()** — Implement job cancellation
-    - Use spark-submit --kill or REST DELETE
-    - Test: Submit job, cancel, verify CANCELLED status
+**Credentials Management:**
+Per [Helm secrets best practices](https://phoenixnap.com/kb/helm-environment-variables):
+1. Development: Credentials in `values.yaml` (gitignored)
+2. Production: Override via `--set` or separate values file
+3. Kubernetes Secret created by helper template:
 
-12. **Error handling** — Add try/catch in async submit, update job.errorMessage
-    - Handle ProcessBuilder failures, parse errors
-    - Test: Submit invalid code, verify FAILED status with message
+```yaml
+# templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "atadflow.fullname" . }}-db
+type: Opaque
+stringData:
+  username: {{ .Values.postgresql.auth.username }}
+  password: {{ .Values.postgresql.auth.password }}
+```
 
-### Phase 5: Optimization (Optional)
-13. **Scheduled background poller** — Reduce per-request polling load
-    - @Scheduled task updates all RUNNING jobs
-    - Test: Submit multiple jobs, verify status updates without frontend polling
+**Confidence:** HIGH - [Bitnami PostgreSQL chart](https://artifacthub.io/packages/helm/bitnami/postgresql) is production-ready (v12.5.8 updated Feb 2026). [Recent guide (Jan 2026)](https://oneuptime.com/blog/post/2026-01-17-helm-postgresql-kubernetes-deployment/view) confirms best practices. [Subchart dependency pattern](https://oneuptime.com/blog/post/2026-01-30-helm-subcharts-dependencies/view) is standard approach.
 
-14. **History server fallback** — Query history server on 404
-    - Handles completed jobs after Spark UI shuts down
-    - Test: Submit job, wait for completion, verify status still accurate
+---
 
-## Confidence Assessment
+### 3. Spark Connect on Kubernetes: Architecture Options
 
-| Area | Confidence | Rationale |
-|------|------------|-----------|
-| **Submission via spark-submit** | HIGH | Official Spark submission mechanism, well-documented, ProcessBuilder is standard JDK |
-| **REST API polling** | HIGH | Official Spark monitoring API (since 1.x), stable endpoint contract |
-| **Async with ManagedExecutor** | HIGH | Quarkus best practice, MicroProfile standard, extensive documentation |
-| **No Spark Connect client needed** | HIGH | Spark Connect is for interactive DataFrame API, not PySpark script submission (verified in official docs) |
-| **Docker Compose config** | MEDIUM | Standard pattern from community examples, but port conflicts and networking can vary by environment |
-| **Status state machine** | MEDIUM | REST API states documented, but edge cases (crashes, network failures) need testing |
-| **History server fallback** | MEDIUM | Documented API, but configuration (spark.eventLog.enabled) must be correct |
+#### Option A: Spark Operator (Recommended for Production)
 
-## Open Questions for Phase-Specific Research
+**Architecture:**
+```
+Atadflow Pod → SparkConnect CRD → Spark Operator → Spark Connect Server Pod(s)
+                                        ↓
+                                 Spark Driver/Executor Pods
+```
 
-1. **Spark version compatibility:** Does spark-submit output format vary between Spark 3.5 and 4.0? (Test during Phase 2, task 4)
-2. **Job cancellation reliability:** Does spark-submit --kill work immediately, or does it require graceful shutdown? (Test during Phase 4, task 11)
-3. **History server delay:** How long after completion before application appears in history server? (Test during Phase 5, task 14)
-4. **Resource limits:** What happens when Spark cluster is saturated? Does spark-submit queue or fail immediately? (Test during scaling, if needed)
+**Implementation:**
+
+1. **Install Apache Spark Kubernetes Operator:**
+```bash
+helm repo add spark https://apache.github.io/spark-kubernetes-operator
+helm repo update
+helm install spark-operator spark/spark-kubernetes-operator
+```
+
+2. **Define SparkConnect CRD:**
+```yaml
+# helm/atadflow/templates/spark-connect.yaml (if operator in cluster)
+apiVersion: spark.apache.org/v1alpha1
+kind: SparkConnect
+metadata:
+  name: {{ include "atadflow.fullname" . }}-spark
+spec:
+  image: apache/spark:4.0.2
+  server:
+    replicas: 1
+    service:
+      type: ClusterIP
+      port: 15002
+```
+
+3. **Connection from Atadflow:**
+```yaml
+# In deployment.yaml
+- name: SPARK_CONNECT_URL
+  value: "sc://{{ include "atadflow.fullname" . }}-spark:15002"
+```
+
+**Pros:**
+- Operator manages Spark Connect lifecycle automatically
+- Scalable: Can increase `replicas` for multi-job parallelism
+- Production-ready: Handles restarts, health monitoring
+- Native support for Spark 4.0 Connect API
+
+**Cons:**
+- Requires operator installation (cluster-level or namespace CRD)
+- Additional complexity for simple single-user tool
+- Operator must be pre-installed or chart must conditionally install it
+
+**Confidence:** MEDIUM - [Apache Spark Operator added SparkConnect CRD](https://apache.github.io/spark-kubernetes-operator/) support in v1.5.0 (Jan 2026). However, operator installation adds dependency. Documentation shows successful deployments, but this is newer feature.
+
+#### Option B: Simple Deployment (Recommended for MVP)
+
+**Architecture:**
+```
+Atadflow Pod → Spark Connect Service → Spark Connect Deployment Pod
+                                              ↓
+                                       Spark driver/executors in same pod
+```
+
+**Implementation:**
+
+```yaml
+# helm/atadflow/templates/spark-connect-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atadflow.fullname" . }}-spark-connect
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-connect
+  template:
+    metadata:
+      labels:
+        app: spark-connect
+    spec:
+      containers:
+      - name: spark-connect
+        image: apache/spark:4.0.2
+        command:
+        - /opt/spark/sbin/start-connect-server.sh
+        args:
+        - --packages
+        - org.apache.spark:spark-connect_2.13:4.0.2
+        - --conf
+        - spark.jars.ivy=/tmp/.ivy2
+        ports:
+        - containerPort: 15002
+          name: grpc
+        - containerPort: 4040
+          name: ui
+        env:
+        - name: SPARK_NO_DAEMONIZE
+          value: "true"
+        - name: SPARK_USER_NAME
+          value: "spark"
+        - name: HOME
+          value: "/tmp"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 4040
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atadflow.fullname" . }}-spark-connect
+spec:
+  selector:
+    app: spark-connect
+  ports:
+  - port: 15002
+    targetPort: 15002
+    name: grpc
+  - port: 4040
+    targetPort: 4040
+    name: ui
+```
+
+**Pros:**
+- Direct translation from existing Docker Compose setup
+- No external dependencies (operator)
+- Simpler debugging (single pod)
+- Matches existing subprocess-based job execution model
+- Faster initial implementation
+
+**Cons:**
+- Single replica (no scaling for concurrent jobs)
+- Manual lifecycle management
+- Not production-optimized for multi-tenant scenarios
+
+**Confidence:** HIGH - Direct port of existing Docker Compose configuration. [Official Spark documentation](https://spark.apache.org/docs/latest/running-on-kubernetes.html) shows standard K8s deployment. Existing health check (port 4040) maps to `livenessProbe`.
+
+**Recommendation:** **Option B (Simple Deployment)** for v1.2 milestone. Simpler integration with existing subprocess execution model, no operator dependency, faster path to working K8s deployment. Option A can be explored in future milestone for multi-user/scalability needs.
+
+---
+
+### 4. ConfigMap and Secret Injection
+
+**Current Environment Variables (from application.properties):**
+```properties
+%prod.quarkus.datasource.jdbc.url=${DATABASE_URL:jdbc:postgresql://postgres:5432/atadflow}
+%prod.quarkus.datasource.username=atadflow
+%prod.quarkus.datasource.password=atadflow
+%prod.spark.connect.url=${SPARK_CONNECT_URL:sc://spark-connect:15002}
+%prod.python.executable=python3
+```
+
+**Kubernetes Mapping:**
+
+**ConfigMap (non-sensitive):**
+```yaml
+# templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "atadflow.fullname" . }}
+data:
+  python.executable: "python3"
+  spark.connect.url: "sc://{{ include "atadflow.fullname" . }}-spark-connect:15002"
+```
+
+**Secret (sensitive):**
+```yaml
+# templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "atadflow.fullname" . }}-db
+type: Opaque
+stringData:
+  username: {{ .Values.postgresql.auth.username | quote }}
+  password: {{ .Values.postgresql.auth.password | quote }}
+  database-url: "jdbc:postgresql://{{ include "atadflow.postgresql.fullname" . }}:5432/{{ .Values.postgresql.auth.database }}"
+```
+
+**Deployment Environment Injection:**
+Per [Helm environment variables guide](https://phoenixnap.com/kb/helm-environment-variables):
+```yaml
+# In deployment.yaml containers section
+env:
+- name: PYTHON_EXECUTABLE
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "atadflow.fullname" . }}
+      key: python.executable
+- name: SPARK_CONNECT_URL
+  valueFrom:
+    configMapKeyRef:
+      name: {{ include "atadflow.fullname" . }}
+      key: spark.connect.url
+- name: DATABASE_URL
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "atadflow.fullname" . }}-db
+      key: database-url
+- name: QUARKUS_DATASOURCE_USERNAME
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "atadflow.fullname" . }}-db
+      key: username
+- name: QUARKUS_DATASOURCE_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "atadflow.fullname" . }}-db
+      key: password
+```
+
+**Best Practices:**
+1. ConfigMaps for non-sensitive config (Python path, Spark URL structure)
+2. Secrets for credentials (DB password, future API keys)
+3. Parameterize via `values.yaml` for environment-specific overrides
+4. Per [2026 Helm guide](https://jiminbyun.medium.com/how-to-manage-environment-variables-in-helm-charts-a-comprehensive-guide-eac379703099): avoid hardcoding, use `{{ .Values.* }}` references
+
+**Confidence:** HIGH - Standard Kubernetes pattern verified across [multiple](https://phoenixnap.com/kb/helm-environment-variables) [recent](https://jiminbyun.medium.com/how-to-manage-environment-variables-in-helm-charts-a-comprehensive-guide-eac379703099) [sources](https://medium.com/gammastack/mounting-environment-variables-safely-with-kubernetes-secrets-and-helm-chart-764420dc787b).
+
+---
+
+## Integration Test Architecture
+
+### Test Environment: k3d
+
+**Rationale:** k3d wraps k3s (lightweight Kubernetes) in Docker, starts <5 seconds, fully compliant with standard K8s. Per [k3d guide](https://devtron.ai/blog/k3d-for-local-kubernetes-development/), ideal for local Helm testing. No k3d-specific assumptions in Helm chart (works on any K8s cluster).
+
+**Setup:**
+```bash
+k3d cluster create atadflow-test
+kubectl config use-context k3d-atadflow-test
+helm install atadflow ./helm/atadflow
+```
+
+**Confidence:** HIGH - [k3d is standard for local K8s testing](https://medium.com/@munza/local-kubernetes-with-k3d-helm-dashboard-6510d906431b), [supports Helm natively](https://docs.k3s.io/add-ons/helm).
+
+### Test Strategy: kubectl port-forward + Existing Test Harness
+
+**Architecture:**
+```
+Integration Test Process (JVM)
+  ↓
+kubectl port-forward (localhost:8080 → atadflow-pod:8080)
+  ↓
+Atadflow Pod (Quarkus)
+  ↓
+PostgreSQL Pod (Bitnami subchart)
+  ↓
+Spark Connect Pod (Simple Deployment)
+```
+
+**Implementation:**
+```java
+// k8s-integration-tests/src/test/java/io/atadflow/k8s/HelmDeploymentTest.java
+@QuarkusTest
+public class HelmDeploymentTest {
+
+    private Process portForwardProcess;
+
+    @BeforeEach
+    void setupPortForward() throws IOException {
+        // Start kubectl port-forward 8080:8080
+        portForwardProcess = new ProcessBuilder(
+            "kubectl", "port-forward",
+            "deployment/atadflow", "8080:8080"
+        ).start();
+
+        // Wait for port-forward to establish
+        Thread.sleep(2000);
+    }
+
+    @Test
+    void testHealthEndpoints() {
+        given()
+            .when().get("http://localhost:8080/q/health/live")
+            .then().statusCode(200);
+
+        given()
+            .when().get("http://localhost:8080/q/health/ready")
+            .then().statusCode(200);
+    }
+
+    @Test
+    void testFlowExecution() {
+        // Reuse existing DockerComposeIntegrationTest logic
+        // POST /api/flows → GET /api/flows/{id} → POST /api/jobs → poll status
+    }
+
+    @AfterEach
+    void teardownPortForward() {
+        if (portForwardProcess != null) {
+            portForwardProcess.destroy();
+        }
+    }
+}
+```
+
+**Alternative Access Methods:**
+Per [kubectl port-forward testing guide (Feb 2026)](https://oneuptime.com/blog/post/2026-02-09-kubectl-port-forward-testing/view):
+
+1. **kubectl port-forward** (recommended): Localhost access, no cluster networking changes
+2. **kubectl exec**: Direct pod shell access for debugging
+3. **NodePort Service**: Exposes on node IP (not portable across clusters)
+4. **LoadBalancer**: Requires cloud provider (not available in k3d without MetalLB)
+
+**Confidence:** HIGH - Port-forward is [standard testing approach](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/), reuses existing REST-Assured test suite from DockerComposeIntegrationTest.
+
+### Test Execution Flow
+
+```bash
+# CI or local testing
+k3d cluster create atadflow-test
+helm install atadflow ./helm/atadflow --wait --timeout 5m
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/name=atadflow --timeout=120s
+./gradlew :k8s-integration-tests:test
+helm uninstall atadflow
+k3d cluster delete atadflow-test
+```
+
+**Confidence:** MEDIUM - Pattern validated across [k3d Helm testing examples](https://medium.com/@munza/local-kubernetes-with-k3d-helm-dashboard-6510d906431b), but integration with existing Gradle test suite needs implementation details.
+
+---
+
+## Telepresence Architecture
+
+### How It Works
+
+Per [Telepresence documentation](https://kubernetes.io/docs/tasks/debug/debug-cluster/local-debugging/):
+
+1. **Traffic Manager:** Deployed as pod in cluster, coordinates intercepts
+2. **Traffic Agent:** Injected into target pod, proxies traffic
+3. **Local Daemon:** Runs on developer machine, receives intercepted traffic
+4. **VPN Tunnel:** Two-way network proxy between local machine and cluster
+
+**Architecture Diagram:**
+```
+Developer Laptop                  Kubernetes Cluster
+─────────────────                 ──────────────────
+Local Quarkus App                 atadflow Deployment
+(port 8080)                         ↓
+    ↑                             Traffic Agent (sidecar)
+    │                               ↑
+Telepresence Daemon ←──VPN Tunnel──┤
+                                    │
+                                Traffic Manager Pod
+                                    ↑
+                              Service (atadflow)
+                                    ↑
+                              Ingress/LoadBalancer
+```
+
+### Intercept Command
+
+```bash
+# Connect to cluster
+telepresence connect
+
+# Intercept atadflow deployment
+telepresence intercept atadflow --port 8080:8080
+
+# Now run local Quarkus app
+cd backend
+./gradlew quarkusDev
+
+# All traffic to atadflow service → localhost:8080
+# Local app sees cluster resources (PostgreSQL, Spark Connect)
+```
+
+**What Gets Intercepted:**
+- HTTP requests to atadflow Service → routed to localhost:8080
+- Environment variables from pod → injected into local process
+- ConfigMaps/Secrets → accessible locally
+
+**What Doesn't Get Intercepted:**
+- Python subprocess execution (runs locally, connects to cluster Spark Connect)
+- Database connections (local app connects to cluster PostgreSQL via service DNS)
+
+Per [Telepresence intercept guide](https://www.getambassador.io/docs/telepresence/latest/howtos/intercepts/): "Intercepts redirect incoming traffic to a service in your cluster to your local environment instead."
+
+**PySpark Subprocess Behavior:**
+When Atadflow executes PySpark via ProcessBuilder:
+1. Local Quarkus app receives HTTP request (intercepted)
+2. Generates PySpark code with `SparkSession.builder.remote("sc://atadflow-spark-connect:15002")`
+3. Spawns Python subprocess on developer laptop
+4. Python subprocess connects to cluster Spark Connect (via VPN tunnel)
+5. Spark Connect executes streaming job in cluster
+
+**Confidence:** MEDIUM-HIGH - [Recent guide (Jan 2026)](https://oneuptime.com/blog/post/2026-01-19-kubernetes-telepresence-local-debugging/view) confirms architecture. Subprocess execution over VPN tunnel is supported but not explicitly documented for Spark Connect use case.
+
+### Telepresence vs kubectl port-forward
+
+| Feature | Telepresence | kubectl port-forward |
+|---------|-------------|---------------------|
+| Traffic interception | Yes (transparent replacement) | No (manual forwarding) |
+| Two-way networking | Yes (VPN) | One-way (localhost → pod) |
+| Environment variables | Injected from pod | Manual setup |
+| Use case | Active development | Testing/debugging |
+| Setup complexity | Medium (daemon install) | Low (built-in kubectl) |
+
+**Recommendation:** Document both approaches:
+- Telepresence for rapid iteration (change Java code, see results without rebuild)
+- kubectl port-forward for integration testing (automated CI)
+
+**Confidence:** HIGH - [Official K8s documentation](https://kubernetes.io/docs/tasks/debug/debug-cluster/local-debugging/) and [Ambassador docs](https://telepresence.io/docs/concepts/faster/) provide clear guidance.
+
+---
+
+## Component Dependencies and Build Order
+
+### Dependency Graph
+
+```
+1. Helm Chart Structure (Chart.yaml, values.yaml, _helpers.tpl)
+   └─→ 2. PostgreSQL Subchart Integration
+       └─→ 3. Spark Connect Deployment
+           └─→ 4. Atadflow Deployment (depends on PostgreSQL + Spark Connect)
+               └─→ 5. Service + Ingress (optional)
+                   └─→ 6. Integration Tests
+                       └─→ 7. Telepresence Documentation
+```
+
+### Suggested Build Order
+
+| Phase | Component | Rationale | Validation |
+|-------|-----------|-----------|------------|
+| 1 | **Helm Chart Scaffold** | Foundation for all other components | `helm lint`, `helm template` renders |
+| 2 | **PostgreSQL Subchart** | Required dependency for Atadflow | `helm dependency update`, PostgreSQL pod starts |
+| 3 | **Spark Connect Deployment** | Required for job execution | Spark Connect pod healthy, port 15002 accessible |
+| 4 | **Atadflow Deployment** | Core application | Pod starts, health probes pass |
+| 5 | **ConfigMap/Secret Integration** | Environment configuration | Environment variables injected correctly |
+| 6 | **Service Resource** | Network access to Atadflow | Service routes traffic to pod |
+| 7 | **Integration Tests** | End-to-end validation | Tests pass on k3d cluster |
+| 8 | **Telepresence Documentation** | Developer experience | Intercept works, local dev functional |
+
+**Critical Path:** 1 → 2 → 3 → 4 (nothing can proceed until Helm structure + dependencies are working)
+
+**Parallel Work Opportunities:**
+- ConfigMap/Secret templates can be written alongside Deployment (both use same values)
+- Integration test scaffolding can be prepared while Helm chart is being built
+- Telepresence documentation is independent (can be written last)
+
+**Confidence:** HIGH - Standard Helm development workflow, dependencies clearly defined.
+
+---
+
+## New vs Modified Components
+
+### New Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `helm/atadflow/Chart.yaml` | Project root | Helm chart metadata and dependencies |
+| `helm/atadflow/values.yaml` | Project root | Configuration defaults |
+| `helm/atadflow/templates/*.yaml` | Project root | Kubernetes manifests (Deployment, Service, ConfigMap, Secret) |
+| `helm/atadflow/templates/_helpers.tpl` | Project root | Reusable template functions |
+| `helm/atadflow/templates/NOTES.txt` | Project root | Post-install instructions |
+| `k8s-integration-tests/` | Project root | Kubectl-based integration tests |
+| `README-TELEPRESENCE.md` | Project root | Developer guide for Telepresence |
+
+### Modified Components
+
+| Component | Changes | Rationale |
+|-----------|---------|-----------|
+| `Dockerfile` | **NONE** | Reused as-is by K8s Deployment |
+| `docker-compose.yml` | **NONE** (kept for local dev) | K8s replaces for production, Docker Compose remains local option |
+| `application.properties` | **NONE** | Existing `%prod` profile already uses env vars |
+| `.gitignore` | Add `helm/atadflow/charts/` | Ignore downloaded subchart dependencies |
+| `README.md` | Add K8s deployment section | Document `helm install` process |
+
+**Key Insight:** Existing architecture is K8s-ready. No backend/frontend code changes needed. Docker Compose env var pattern maps directly to K8s ConfigMap/Secret injection.
+
+**Confidence:** HIGH - Clean separation of concerns allows Helm addition without modifying existing components.
+
+---
+
+## Integration Points Summary
+
+### Existing → Kubernetes Mappings
+
+| Existing Component | Kubernetes Equivalent | Integration Method |
+|--------------------|----------------------|-------------------|
+| Dockerfile | Container image in Deployment | Direct reuse via `image:` spec |
+| Docker Compose `environment:` | ConfigMap + Secret | `valueFrom` with `configMapKeyRef`/`secretKeyRef` |
+| Docker Compose `healthcheck:` | Liveness/Readiness/Startup probes | `httpGet` to existing `/q/health/*` endpoints |
+| Docker Compose service DNS | K8s Service DNS | Replace `postgres` with `{{ .Release.Name }}-postgresql` |
+| Docker Compose `depends_on:` | Helm dependency + init containers (optional) | Chart.yaml dependencies + readiness probes |
+| Port 8080 | Service targetPort | Direct mapping |
+| PythonLivenessCheck | Startup probe | Handles 60s initialization period |
+
+### External Dependencies
+
+| Dependency | Source | Version | Integration |
+|------------|--------|---------|-------------|
+| Bitnami PostgreSQL | https://charts.bitnami.com/bitnami | ~12.5.8 | Chart.yaml dependency |
+| Apache Spark image | docker.io/apache/spark | 4.0.2 | Deployment image reference |
+| k3d (testing) | https://k3d.io/ | Latest | Local test cluster |
+| Telepresence (optional) | https://telepresence.io/ | Latest | Developer tooling |
+
+**Confidence:** HIGH - All dependencies are stable, actively maintained, and documented as of Feb 2026.
+
+---
+
+## Risks and Mitigations
+
+### Risk 1: Spark Connect Multi-Job Concurrency
+**Risk:** Single Spark Connect pod may not handle concurrent job submissions well.
+**Mitigation:** Start with Simple Deployment (single pod). If concurrency issues arise, migrate to Spark Operator with multiple replicas. Existing subprocess model already serializes jobs at Quarkus level.
+**Severity:** Low (single-user tool, sequential execution expected)
+
+### Risk 2: Persistent Volume for PostgreSQL
+**Risk:** Data loss if PostgreSQL pod restarts without persistent volume.
+**Mitigation:** Bitnami subchart defaults to `persistence.enabled: true`. Ensure StorageClass is available in target cluster (k3d includes local-path provisioner by default).
+**Severity:** Medium (critical for production, k3d handles automatically)
+
+### Risk 3: Telepresence VPN Overhead for PySpark
+**Risk:** Network latency from laptop → cluster Spark Connect over VPN.
+**Mitigation:** Document this as expected behavior. For performance testing, use in-cluster execution (without intercept). Telepresence is development tool, not production deployment.
+**Severity:** Low (development-only concern)
+
+### Risk 4: Helm Subchart Version Compatibility
+**Risk:** Bitnami PostgreSQL chart major version changes could break compatibility.
+**Mitigation:** Pin to minor version range in Chart.yaml (`version: ~12.5.8` allows 12.5.x, blocks 12.6+). Test upgrades in staging before production.
+**Severity:** Low (standard Helm versioning practice)
+
+**Confidence:** MEDIUM - Risks are standard Kubernetes concerns with well-known mitigations. No Atadflow-specific architectural blockers identified.
+
+---
 
 ## Sources
 
-### Spark Connect Architecture
-- [Spark Connect Overview - Spark 4.1.0 Documentation](https://spark.apache.org/docs/latest/spark-connect-overview.html) — HIGH confidence
-- [Spark Connect | Apache Spark](https://spark.apache.org/spark-connect/) — HIGH confidence
-- [Spark Connect Overview - Spark 3.5.0 Documentation](https://spark.apache.org/docs/3.5.0/spark-connect-overview.html) — HIGH confidence
+### Helm Chart Structure
+- [Charts | Helm](https://helm.sh/docs/topics/charts/)
+- [Best Practices | Helm](https://helm.sh/docs/chart_best_practices/)
+- [Helm Charts: The Complete Guide for 2026 | DevToolbox Blog](https://devtoolbox.dedyn.io/blog/helm-charts-complete-guide)
+- [How to Organize Your Helm Charts for Efficient Kubernetes Deployments](https://www.anantacloud.com/post/how-to-organize-your-helm-charts-for-efficient-kubernetes-deployments)
 
-### Spark REST API
-- [Monitoring and Instrumentation - Spark 4.1.0 Documentation](https://spark.apache.org/docs/latest/monitoring.html) — HIGH confidence
-- [How to Submit a Spark Job via Rest API? - Spark By Examples](https://sparkbyexamples.com/spark/submit-spark-job-via-rest-api/) — MEDIUM confidence
+### Kubernetes Health Probes
+- [Liveness, Readiness, and Startup Probes | Kubernetes](https://kubernetes.io/docs/concepts/configuration/liveness-readiness-startup-probes/)
+- [Configure Liveness, Readiness and Startup Probes | Kubernetes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)
+- [How to Build Health Probes for Kubernetes in Spring Boot](https://oneuptime.com/blog/post/2026-01-25-health-probes-kubernetes-spring-boot/view)
+- [Options available for Health Checks with Helm Charts | by Chris Harwell | Medium](https://chrisharwell94.medium.com/options-available-for-health-checks-with-helm-charts-b139f26f70aa)
 
-### Spark Submission
-- [Submitting Applications - Spark 4.1.0 Documentation](https://spark.apache.org/docs/latest/submitting-applications.html) — HIGH confidence
-- [How to Spark Submit Python | PySpark File (.py)? - Spark By Examples](https://sparkbyexamples.com/pyspark/spark-submit-python-file/) — MEDIUM confidence
-- [SparkLauncher (Spark 4.1.0 JavaDoc)](https://spark.apache.org/docs/latest/api/java/org/apache/spark/launcher/SparkLauncher.html) — HIGH confidence
+### PostgreSQL Subchart
+- [Bitnami Secure Images Helm chart for PostgreSQL](https://artifacthub.io/packages/helm/bitnami/postgresql)
+- [charts/bitnami/postgresql at main · bitnami/charts](https://github.com/bitnami/charts/tree/main/bitnami/postgresql)
+- [How to Implement Helm Subcharts Dependencies](https://oneuptime.com/blog/post/2026-01-30-helm-subcharts-dependencies/view)
+- [Deploying PostgreSQL on Kubernetes with Helm](https://oneuptime.com/blog/post/2026-01-17-helm-postgresql-kubernetes-deployment/view)
 
-### Quarkus Async Execution
-- [Mastering Background Tasks in Quarkus: From Simple Schedulers to Resilient Job Execution](https://www.the-main-thread.com/p/quarkus-background-tasks-scheduling-async-quartz) — MEDIUM confidence
-- [Context Propagation in Quarkus - Quarkus](https://quarkus.io/guides/context-propagation) — HIGH confidence
-- [relative how to trigger a background/side job without waiting it · quarkusio/quarkus · Discussion #31022](https://github.com/quarkusio/quarkus/discussions/31022) — MEDIUM confidence
+### Spark Connect on Kubernetes
+- [Apache Spark™ K8s Operator | spark-kubernetes-operator](https://apache.github.io/spark-kubernetes-operator/)
+- [Spark Connect support · Issue #1801 · kubeflow/spark-operator](https://github.com/kubeflow/spark-operator/issues/1801)
+- [Running Spark on Kubernetes - Spark 4.1.0 Documentation](https://spark.apache.org/docs/latest/running-on-kubernetes.html)
+- [Spark Connect :: spark-k8s :: Stackable Documentation](https://docs.stackable.tech/home/stable/spark-k8s/usage-guide/spark-connect/)
 
-### Java Process Execution
-- [How to Call Python From Java | Baeldung](https://www.baeldung.com/java-working-with-python) — MEDIUM confidence
-- [Java ProcessBuilder examples - Mkyong.com](https://mkyong.com/java/java-processbuilder-examples/) — MEDIUM confidence
+### ConfigMap and Secret Injection
+- [How to Use Environment Variables with Helm Charts](https://phoenixnap.com/kb/helm-environment-variables)
+- [How to Manage Environment Variables in Helm Charts: A Comprehensive Guide | by Jimin | Medium](https://jiminbyun.medium.com/how-to-manage-environment-variables-in-helm-charts-a-comprehensive-guide-eac379703099)
+- [Mount Environment Variables Safely with Kubernetes Secrets and Helm chart | by Ketan Saxena | GAMMASTACK | Medium](https://medium.com/gammastack/mounting-environment-variables-safely-with-kubernetes-secrets-and-helm-chart-764420dc787b)
+- [Referencing Kubernetes Secret in Helm Chart | Baeldung on Ops](https://www.baeldung.com/ops/helm-chart-kubernetes-secret-reference)
 
-### Docker Configuration
-- [bitnami/spark - Docker Image](https://hub.docker.com/r/bitnami/spark/) — MEDIUM confidence
-- [Setting up Spark using Docker. Quick tutorial on how to create… | by Dimitris Kalouris | Medium](https://medium.com/@dkalouris/setting-up-spark-using-docker-59db2d073487) — MEDIUM confidence
+### Integration Testing
+- [How to Use kubectl port-forward for Testing Service Connectivity](https://oneuptime.com/blog/post/2026-02-09-kubectl-port-forward-testing/view)
+- [Use Port Forwarding to Access Applications in a Cluster | Kubernetes](https://kubernetes.io/docs/tasks/access-application-cluster/port-forward-access-application-cluster/)
+- [Kubectl Port-Forward: Complete Guide for Kubernetes Developers](https://lenshq.io/blog/kubernetes-port-forward)
 
-### Maven Dependencies
-- [Maven Central: org.apache.spark:spark-connect-client-jvm_2.13](https://central.sonatype.com/artifact/org.apache.spark/spark-connect-client-jvm_2.13) — HIGH confidence
-- [org.apache.spark:spark-connect-client-jvm_2.12 - Maven Central](https://central.sonatype.com/artifact/org.apache.spark/spark-connect-client-jvm_2.12) — HIGH confidence
+### k3d Local Testing
+- [K3d for Local Kubernetes Development | Devtron](https://devtron.ai/blog/k3d-for-local-kubernetes-development/)
+- [Run Kubernetes Cluster Locally with k3d and Helm | Medium](https://medium.com/@munza/local-kubernetes-with-k3d-helm-dashboard-6510d906431b)
+- [Helm Charts: The Complete Guide for 2026 | DevToolbox Blog](https://devtoolbox.dedyn.io/blog/helm-charts-complete-guide)
 
----
-*Architecture research for: Spark Connect Integration (Atadflow)*
-*Researched: 2026-02-08*
+### Telepresence
+- [GitHub - telepresenceio/telepresence: Local development against a remote Kubernetes or OpenShift cluster](https://github.com/telepresenceio/telepresence)
+- [How to Debug Locally with Telepresence in Kubernetes](https://oneuptime.com/blog/post/2026-01-19-kubernetes-telepresence-local-debugging/view)
+- [Developing and debugging services locally using telepresence | Kubernetes](https://kubernetes.io/docs/tasks/debug/debug-cluster/local-debugging/)
+- [Intercept a service in your own environment | Ambassador Telepresence](https://www.getambassador.io/docs/telepresence/latest/howtos/intercepts/)
+- [Making the remote local: Faster feedback, collaboration and debugging | Telepresence](https://telepresence.io/docs/concepts/faster/)

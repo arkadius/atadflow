@@ -1,268 +1,420 @@
-# Stack Research: Spark Connect Integration
+# Technology Stack — Helm Chart Kubernetes Distribution
 
-**Domain:** Streaming Flow Designer with Spark Connect Integration
-**Researched:** 2026-02-08
-**Confidence:** MEDIUM
+**Project:** Atadflow v1.2 Helm Chart
+**Researched:** 2026-02-15
+**Confidence:** MEDIUM (WebSearch verified with official docs)
 
 ## Executive Summary
 
-Adding Spark Connect integration to a Java/Quarkus backend requires choosing between three architectural approaches. **Spark Standalone with REST API submission is recommended** for this project because it's straightforward, Docker-friendly, and doesn't require additional middleware. Spark Connect itself does not support Java clients for submitting PySpark code—it only supports Python and Scala clients. The recommended approach uses Spark's built-in REST submission API (enabled by default on port 6066) with Quarkus REST Client for HTTP communication.
+This stack document covers NEW additions for Helm chart Kubernetes deployment. Existing stack (Quarkus 3.31.2, PostgreSQL 16, PySpark 4.0.2) remains unchanged. Focus is on packaging and orchestration layers only.
 
 ## Recommended Stack
 
-### Core Technologies
+### Core Helm Infrastructure
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| Apache Spark (Standalone) | 4.0.2 | Spark cluster runtime for executing PySpark jobs | Latest stable release (Feb 5, 2026), supports REST API submission |
-| Spark REST Submission API | Built-in | Submit PySpark applications via HTTP | Enabled by default in standalone mode, no additional dependencies |
-| Quarkus REST Client | 3.31.0+ | HTTP client for calling Spark REST API | Reactive, built-in to Quarkus, handles async/sync patterns |
-| Docker (apache/spark) | 4.0.2 | Containerized Spark server | Official Apache image, includes Spark Connect server and standalone master |
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Helm | 3.x | Package manager, chart orchestration | Industry standard for K8s deployments, supports OCI registries, dependency management |
+| Chart API Version | v2 | Chart metadata format | Current standard for Helm 3+, required for dependency features |
+| Kubernetes | 1.32+ | Container orchestration | Apache Spark Operator requires 1.32+, k3d supports latest versions |
+
+**Rationale:** Helm 3 removed Tiller (server-side component), improving security and simplifying operations. Chart API v2 is the only supported version for Helm 3 charts. Version remains `v2` as of February 2026.
+
+### PostgreSQL Dependency
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Bitnami PostgreSQL Chart | 16.x | Database subchart | PostgreSQL 16 compatible (matches existing stack), production hardened, configurable via values |
+| Repository | `oci://registry-1.docker.io/bitnamicharts` | OCI registry for Helm charts | **CRITICAL:** As of August 28, 2025, Bitnami stopped publishing new chart updates to Docker Hub OCI. Existing charts remain available but no longer receive updates. |
+
+**Installation syntax:**
+```yaml
+# In Chart.yaml
+dependencies:
+  - name: postgresql
+    version: "~16.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: postgresql.enabled
+```
+
+**IMPORTANT CAVEAT:** The Bitnami public OCI registry (`oci://registry-1.docker.io/bitnamicharts`) no longer receives updates. For production use, consider:
+1. Using the specific PostgreSQL 16.x version that matches your needs (frozen, no updates)
+2. Migrating to Bitnami Secure Images (commercial subscription with continued updates)
+3. Switching to an alternative PostgreSQL Helm chart (e.g., CloudNativePG, Zalando Postgres Operator)
+
+For this milestone (dev/demo environment), the existing Bitnami chart at Docker Hub OCI is acceptable since it's already PostgreSQL 16 compatible and won't need security updates during development.
+
+### Spark Connect on Kubernetes
+
+**Three Options Evaluated:**
+
+| Option | Maturity | Spark Connect Support | Recommendation |
+|--------|----------|----------------------|----------------|
+| Apache Spark Operator | Production (v0.7.0, Jan 2026) | YES — Native SparkCluster CRD | **RECOMMENDED** |
+| Kubeflow Spark Operator | Mature (v2.x, 2023+) | YES — Added SparkConnect CRD | Alternative |
+| Stackable Spark Operator | Production (25.7+) | YES — Since 25.7 (2025) | Alternative |
+| Plain Deployment/StatefulSet | Manual | N/A (DIY) | Not recommended |
+
+#### RECOMMENDED: Apache Spark Operator
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Apache Spark Operator | 0.7.0 (chart 1.5.0) | Manage Spark Connect servers | Official Apache project, designed for Spark 3.5+, first-class Spark Connect support, active development |
+| Helm Chart Repository | `https://apache.github.io/spark-kubernetes-operator` | Operator installation | Official Apache Helm repo |
+| Spark Image | `apache/spark:4.0.2` | Spark Connect server runtime | Matches existing PySpark 4.0.2 client version |
+
+**Installation:**
+```bash
+helm repo add spark https://apache.github.io/spark-kubernetes-operator
+helm repo update
+helm install spark-operator spark/spark-kubernetes-operator
+```
+
+**Why Apache Spark Operator over alternatives:**
+- **Official Apache project**: Part of Apache Spark umbrella, not third-party
+- **Spark Connect first-class**: Designed for Spark 3.5+ era with Spark Connect as core capability
+- **Modern architecture**: Uses SparkCluster CRD for managing long-running Spark Connect servers (vs Kubeflow's job-oriented SparkApplication)
+- **Active development**: Latest release January 2026, aligned with Spark 4.x
+- **Requirements match**: Needs K8s 1.32+ which we can provide with k3d
+
+**Kubeflow/Stackable when to use:**
+- Kubeflow: If you're already using Kubeflow ML platform, or need mature job scheduling features
+- Stackable: If you need full Stackable Data Platform integration (HDFS, Kafka, etc.)
+
+**Configuration approach:**
+The Atadflow Helm chart will declare Apache Spark Operator as an **optional dependency** (condition-based). Users can:
+1. Use bundled operator (default for k3d development)
+2. Bring their own Spark Operator installation (production clusters)
+3. Deploy Spark Connect manually without operator (edge cases)
+
+### Testing Infrastructure
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| k3d | 5.x | Local K8s clusters for testing | Lightweight, fast cluster creation/deletion, integrates with Helm, runs k3s in Docker |
+| helm test | Native | Basic chart validation | Built into Helm, tests defined as Helm hooks, sufficient for smoke tests |
+| Terratest (optional) | Latest | Integration testing (Go) | More control than chart-testing, better for complex scenarios, timeout configuration |
+| chart-testing (ct) | Latest | Lint and install tests | Helm chart best practices validation, CI/CD integration |
+
+**Rationale:**
+- **k3d**: k3s in Docker provides multi-node clusters on a single machine, minimal resource usage (423-502 MiB), perfect for local development and CI/CD pipelines
+- **helm test**: Zero additional dependencies, define test pods as Helm hooks with `helm.sh/hook: test` annotation
+- **Terratest over ct**: Terratest chosen for integration tests because chart-testing has 3-minute default timeout (too short for PostgreSQL/Spark startup) and limited configuration options
+- **ct for linting**: chart-testing still valuable for validating chart best practices and structure
+
+**Test strategy:**
+```
+Local dev:     k3d cluster + helm install + helm test
+CI/CD:         k3d cluster + ct lint + Terratest integration tests
+Pre-release:   Multi-node k3d cluster with resource limits
+```
+
+### Development Workflow: Telepresence
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Telepresence | 2.26.0 | Local debugging against K8s cluster | Intercept cluster traffic to local Quarkus dev, no need to rebuild/redeploy, supports Java debugging |
+
+**Key capabilities (as of v2.26.0, Jan 2026):**
+- **Intercepts**: Route traffic from K8s service to local `localhost:8080` (Quarkus dev mode)
+- **Admin controls**: Cluster admins can revoke intercepts (improved for shared environments)
+- **Environment injection**: `--env-file` flag populates local env vars from K8s ConfigMaps/Secrets
+
+**Setup for Quarkus:**
+```bash
+# 1. Connect to cluster
+telepresence connect
+
+# 2. Intercept Atadflow service
+telepresence intercept atadflow \
+  --port 8080:8080 \
+  --env-file .env.k8s
+
+# 3. Run Quarkus in dev mode
+cd backend && ./gradlew quarkusDev
+
+# 4. Traffic to atadflow.namespace.svc.cluster.local → localhost:8080
+```
+
+**IDE integration:**
+- IntelliJ IDEA: Native Telepresence plugin for breakpoint debugging
+- VS Code: Use Telepresence CLI + standard Java debugger
+
+**When to use:**
+- Developing features that require PostgreSQL/Spark Connect in K8s
+- Testing Helm chart configurations without rebuild cycles
+- Debugging service-to-service interactions
+
+### Quarkus Kubernetes Integration
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| quarkus-kubernetes | 3.31.2 | Generate K8s manifests | Auto-generate Deployment, Service, Ingress from `application.properties` annotations |
+| quarkus-helm (optional) | Latest | Generate Helm templates | Quarkiverse extension, converts Kubernetes extension output to Helm templates |
+
+**Configuration approach:**
+
+**Option 1: Manual Helm templates** (RECOMMENDED)
+- Write `templates/deployment.yaml`, `templates/service.yaml` manually
+- Full control over Helm values structure
+- Use existing SmallRye Health endpoints: `/q/health/live`, `/q/health/ready`
+
+**Option 2: quarkus-helm extension**
+- Add `io.quarkiverse.helm:quarkus-helm` dependency
+- Configure via `quarkus.kubernetes.*` properties
+- Extension generates Helm chart from properties
+- **Trade-off**: Less Helm idioms, more Quarkus-centric
+
+**For Atadflow v1.2:** Use Option 1 (manual templates) because:
+- Milestone already has working Dockerfile and health checks
+- Need custom values for PostgreSQL/Spark dependencies
+- Better alignment with Helm best practices
+- Quarkus Kubernetes extension not needed (manual templates clearer)
+
+**Health checks mapping:**
+```yaml
+# Existing Quarkus endpoints work as-is in K8s
+livenessProbe:
+  httpGet:
+    path: /q/health/live
+    port: 8080
+readinessProbe:
+  httpGet:
+    path: /q/health/ready
+    port: 8080
+```
 
 ### Supporting Libraries
 
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| quarkus-rest-client | 3.31.0+ | Reactive REST client for Spark API calls | Required for all Spark job submissions from backend |
-| quarkus-rest-client-jackson | 3.31.0+ | JSON serialization for REST payloads | Required for building submission request JSON |
-
-### Development Tools
-
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| Docker Compose | Run Spark standalone cluster locally | Configure spark-master with REST API enabled on port 6066 |
-| Spark Web UI | Monitor job execution | Available at port 8080 (master) and 4040 (driver application) |
-| Spark History Server (optional) | View completed job logs | Useful for debugging failed jobs |
-
-## Installation
-
-### Backend (Gradle Kotlin DSL)
-
-```kotlin
-// build.gradle.kts
-dependencies {
-    // Quarkus REST client for Spark API communication
-    implementation("io.quarkus:quarkus-rest-client")
-    implementation("io.quarkus:quarkus-rest-client-jackson")
-}
-```
-
-### Docker Compose Setup
-
-```yaml
-# docker-compose.yml
-services:
-  spark-master:
-    image: apache/spark:4.0.2
-    container_name: spark-master
-    ports:
-      - "8080:8080"  # Spark Master Web UI
-      - "7077:7077"  # Spark Master communication
-      - "6066:6066"  # REST API submission
-    environment:
-      - SPARK_MODE=master
-      - SPARK_MASTER_HOST=spark-master
-      - SPARK_MASTER_PORT=7077
-      - SPARK_MASTER_WEBUI_PORT=8080
-      - SPARK_MASTER_REST_ENABLED=true  # Enable REST API
-      - SPARK_MASTER_REST_PORT=6066
-    command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
-      --host spark-master
-      --port 7077
-      --webui-port 8080
-
-  spark-worker:
-    image: apache/spark:4.0.2
-    container_name: spark-worker
-    depends_on:
-      - spark-master
-    ports:
-      - "8081:8081"  # Worker Web UI
-      - "4040:4040"  # Application UI
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_WEBUI_PORT=8081
-    command: >
-      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
-      spark://spark-master:7077
-      --webui-port 8081
-```
+| kubectl | 1.32+ | K8s CLI operations | Debugging, manual operations, CI/CD |
+| docker | 20.10+ | Container runtime for k3d | Required for k3d local clusters |
+| gh (GitHub CLI) | 2.x | PR creation, release management | If using GitHub for repo hosting |
 
 ## Alternatives Considered
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| Spark Standalone REST API | Apache Livy | If you need multi-tenant job execution, session management, or shared Spark contexts across multiple users |
-| Spark Standalone REST API | Spark Connect | If you're building a Python or Scala client (not Java/Quarkus) and want DataFrame API instead of code submission |
-| Spark Standalone REST API | spark-submit via ProcessBuilder | If you need synchronous execution with direct access to stdout/stderr, but this is less cloud-native |
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Package Manager | Helm 3 | Kustomize | Helm has better templating for subcharts, values hierarchy, versioning |
+| PostgreSQL | Bitnami chart | CloudNativePG | Bitnami more familiar, existing stack uses plain PostgreSQL (not operator-managed) |
+| Spark Operator | Apache Spark Operator | Kubeflow Spark Operator | Apache is official, Spark Connect first-class, modern CRDs |
+| Spark Operator | Apache Spark Operator | Manual Deployment | Operator handles scaling, updates, CRD patterns more K8s-native |
+| Local K8s | k3d | minikube | k3d faster startup (seconds vs minutes), better Docker integration, lighter |
+| Local K8s | k3d | kind | k3d has built-in load balancer, registry support, better k3s compatibility |
+| Testing | Terratest | chart-testing (ct) | Terratest has better timeout config, programmatic control (ct good for linting) |
+| Dev Workflow | Telepresence | kubectl port-forward | Telepresence handles env vars, service mesh, more seamless than port-forward |
 
-## What NOT to Use
+## Chart Structure
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| Spark Connect from Java | No Java client support for executing PySpark code (only Python/Scala clients) | Spark Standalone REST API |
-| Apache Livy 0.8.0 | Does not support Spark 4.0 (only up to Spark 3.5.x), development discussion phase for 4.0 | Wait for Livy 1.0 or use Spark REST API |
-| spark-connect-client-jvm | Designed for Scala/JVM code execution, not for submitting PySpark scripts | Spark REST API for PySpark submission |
-| ProcessBuilder with spark-submit | Requires spark-submit binary in backend container, non-standard for cloud deployments | REST API submission |
-
-## Architecture Decision: REST Submission API
-
-### Why This Approach
-
-1. **Native to Spark Standalone**: Enabled by default, no additional middleware (unlike Livy)
-2. **Docker-Friendly**: Master runs in container, backend calls HTTP API
-3. **Quarkus-Native**: Uses standard Quarkus REST Client (reactive or blocking)
-4. **Current Compatibility**: Works with Spark 4.0.2 today (unlike Livy)
-5. **PySpark-Compatible**: Submit .py files directly
-
-### How It Works
-
-```java
-// Quarkus REST Client Interface
-@Path("/v1/submissions")
-@RegisterRestClient(configKey = "spark-api")
-public interface SparkSubmissionClient {
-
-    @POST
-    @Path("/create")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
-    SubmissionResponse submitJob(SubmissionRequest request);
-
-    @GET
-    @Path("/status/{submissionId}")
-    @Produces(MediaType.APPLICATION_JSON)
-    StatusResponse getStatus(@PathParam("submissionId") String submissionId);
-}
-
-// Submission Request Model
-public class SubmissionRequest {
-    public String action = "CreateSubmissionRequest";
-    public String appResource;  // Path to .py file
-    public String clientSparkVersion = "4.0.2";
-    public String mainClass = null;  // null for PySpark
-    public Map<String, String> environmentVariables = new HashMap<>();
-    public List<String> appArgs = new ArrayList<>();
-    public Map<String, String> sparkProperties = new HashMap<>();
-}
+```
+atadflow/
+├── Chart.yaml              # Chart metadata, dependencies
+├── values.yaml             # Default configuration values
+├── templates/
+│   ├── deployment.yaml     # Atadflow deployment
+│   ├── service.yaml        # ClusterIP service
+│   ├── ingress.yaml        # Optional ingress (condition: ingress.enabled)
+│   ├── configmap.yaml      # Quarkus configuration
+│   ├── _helpers.tpl        # Template helpers
+│   └── tests/
+│       └── test-connection.yaml  # helm test hook
+├── charts/                 # Downloaded dependencies (gitignored)
+└── Chart.lock              # Locked dependency versions
 ```
 
-### Configuration (application.properties)
+## Installation Commands
 
-```properties
-# Spark REST API Client
-quarkus.rest-client.spark-api.url=http://localhost:6066
-quarkus.rest-client.spark-api.scope=javax.inject.Singleton
+```bash
+# Development setup (k3d)
+k3d cluster create atadflow --agents 2
+helm repo add spark https://apache.github.io/spark-kubernetes-operator
+helm repo update
+helm dependency update ./atadflow
+helm install atadflow ./atadflow --values values-dev.yaml
+
+# Testing
+helm test atadflow
+
+# Telepresence intercept for local dev
+telepresence intercept atadflow --port 8080:8080
+
+# Cleanup
+helm uninstall atadflow
+k3d cluster delete atadflow
 ```
 
-### Job Submission Flow
+## Integration with Existing Stack
 
-1. **Backend**: Generate PySpark code (already implemented in `CodeGenerationService`)
-2. **Backend**: Write PySpark code to temporary .py file
-3. **Backend**: Upload .py file to Spark-accessible location (volume mount or HDFS)
-4. **Backend**: POST to `/v1/submissions/create` with file path
-5. **Spark**: Returns `submissionId` (e.g., "driver-20260208123456-0001")
-6. **Backend**: Poll GET `/v1/submissions/status/{submissionId}` for status
-7. **Backend**: Update job status in PostgreSQL
+### No Changes Required
 
-### Status Polling
+| Component | Integration Point | Notes |
+|-----------|------------------|-------|
+| Quarkus 3.31.2 | Use existing Dockerfile | Multi-stage build produces image, Helm deploys it |
+| SmallRye Health | Map to K8s probes | `/q/health/live` → livenessProbe, `/q/health/ready` → readinessProbe |
+| PostgreSQL 16 | Subchart dependency | Bitnami chart creates PostgreSQL 16 instance, Quarkus connects via Service |
+| Spark Connect | Operator-managed | Apache Spark Operator creates Spark Connect server, Quarkus clients connect via Service |
+| Gradle 9.3.1 | Build before Helm | `./gradlew build` → `docker build` → `helm install` |
 
-```java
-@Scheduled(every = "5s")
-void pollRunningJobs() {
-    List<Job> runningJobs = jobRepository.findByStatus(JobStatus.RUNNING);
-    for (Job job : runningJobs) {
-        StatusResponse status = sparkClient.getStatus(job.getSubmissionId());
-        if ("FINISHED".equals(status.driverState)) {
-            job.setStatus(JobStatus.COMPLETED);
-        } else if ("FAILED".equals(status.driverState) || "ERROR".equals(status.driverState)) {
-            job.setStatus(JobStatus.FAILED);
-        }
-        jobRepository.persist(job);
-    }
-}
+### Environment Variables
+
+```yaml
+# values.yaml structure
+postgresql:
+  enabled: true
+  auth:
+    database: atadflow
+    username: atadflow
+    # password: set via --set or sealed secrets
+
+sparkConnect:
+  enabled: true
+  image: apache/spark:4.0.2
+  server:
+    port: 15002
+
+atadflow:
+  image:
+    repository: atadflow
+    tag: latest
+  env:
+    QUARKUS_DATASOURCE_JDBC_URL: "jdbc:postgresql://{{ .Release.Name }}-postgresql:5432/atadflow"
+    SPARK_REMOTE: "sc://{{ .Release.Name }}-spark-connect:15002"
 ```
 
-## Spark Connect (Why Not Recommended for This Use Case)
+## Dependency Management
 
-**What is Spark Connect**: A client-server architecture introduced in Spark 3.4 that allows remote connectivity to Spark clusters using gRPC protocol.
+```yaml
+# Chart.yaml
+apiVersion: v2
+name: atadflow
+version: 1.2.0
+appVersion: "1.2.0"
 
-**Supported Languages**:
-- Python (PySpark) — since Spark 3.4
-- Scala — since Spark 3.5
-- **Java: NOT SUPPORTED** for Spark Connect client
+dependencies:
+  - name: postgresql
+    version: "~16.0"
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: postgresql.enabled
+    tags:
+      - database
 
-**Why It Doesn't Fit**:
-- Spark Connect is designed for **DataFrame API access** from remote clients
-- Java backend cannot use Spark Connect to **submit PySpark code**
-- The `spark-connect-client-jvm` library is for Scala/JVM code execution, not PySpark submission
-- Connection via `SparkSession.builder().remote("sc://localhost:15002")` only works in Scala/Python
+  # Optional: bundle Spark Operator or assume it's pre-installed
+  - name: spark-kubernetes-operator
+    version: "~1.5.0"
+    repository: "https://apache.github.io/spark-kubernetes-operator"
+    condition: sparkOperator.enabled
+    tags:
+      - compute
+```
 
-**When to Use Spark Connect**:
-- Building a Python or Scala application that needs remote DataFrame API access
-- Interactive notebooks (JupyterLab with PySpark)
-- Spark Connect is excellent for what it's designed for, but not for Java backends submitting PySpark scripts
+**Notes:**
+- `~16.0` accepts 16.x.x (SemVer patch updates)
+- `condition` fields allow enabling/disabling subcharts via values
+- `oci://` repository syntax for OCI registries (PostgreSQL)
+- `https://` repository syntax for traditional Helm repos (Spark Operator)
 
-## Apache Livy (Why Not Recommended Yet)
+## Version Constraints
 
-**What is Livy**: REST interface for interacting with Apache Spark, providing session management and code execution.
+| Dependency | Minimum | Recommended | Notes |
+|------------|---------|-------------|-------|
+| Helm | 3.0.0 | 3.x latest | Helm 2 not supported (deprecated) |
+| Kubernetes | 1.32.0 | 1.32+ | Apache Spark Operator requirement |
+| Docker | 20.10.0 | 20.10+ | For k3d local clusters |
+| PostgreSQL chart | 16.0.0 | 16.x | Match existing PostgreSQL 16 |
+| Spark Operator | 0.7.0 | 0.7+ | Spark 4.x support |
 
-**Current Status**:
-- Latest version: 0.8.0
-- Supports: Spark 3.0 - 3.5.x, Scala 2.12
-- **Spark 4.0 Support**: In discussion phase for future 0.10.0 or 1.0.0 release
+## Migration Path
 
-**Why Not Now**:
-- Spark 4.0 compatibility not available in stable release
-- Requires deploying additional middleware service
-- More complex than needed for single-user job submission
+**From Docker Compose (v1.1) to Helm (v1.2):**
 
-**When to Use Livy**:
-- Multi-tenant environments where users share a Spark cluster
-- Session-based interactive execution (like notebooks)
-- When Spark 4.0 support is released and your use case requires session management
+1. **Image unchanged**: Use same Dockerfile, push to registry accessible by K8s
+2. **Database**: PostgreSQL data migration (if needed) via pg_dump → Helm install with persistence
+3. **Spark Connect**: Docker container → Operator-managed SparkCluster CRD
+4. **Configuration**: docker-compose environment vars → Helm values.yaml
+5. **Networking**: Docker network → K8s Services (ClusterIP default)
+6. **Persistence**: Docker volumes → PersistentVolumeClaims (via Bitnami subchart)
 
-## Version Compatibility
+**What stays the same:**
+- Application code (zero changes)
+- Health check endpoints
+- gRPC Spark Connect protocol
+- PostgreSQL connection string format (host changes to K8s Service DNS)
 
-| Package/Image | Version | Compatible With | Notes |
-|---------------|---------|-----------------|-------|
-| apache/spark Docker image | 4.0.2 | Spark 4.0.2 | Released Feb 5, 2026 |
-| Spark REST API | Built-in | Spark 3.0+ | Enabled by default in standalone mode |
-| quarkus-rest-client | 3.31.0+ | Quarkus 3.31.2 | Already in your project |
-| Java | 25 | Spark 4.0.2 | Spark supports Java 17+, your Java 25 is compatible |
+## CI/CD Considerations
 
-## Implementation Checklist
+```yaml
+# Example GitHub Actions workflow step
+- name: Test Helm Chart
+  run: |
+    k3d cluster create test --agents 1
+    helm dependency update ./atadflow
+    helm install atadflow ./atadflow --values values-test.yaml --wait --timeout 5m
+    helm test atadflow
+    k3d cluster delete test
+```
 
-- [ ] Add `quarkus-rest-client` and `quarkus-rest-client-jackson` dependencies
-- [ ] Create Docker Compose file with Spark master (REST enabled) and worker
-- [ ] Create `SparkSubmissionClient` REST client interface
-- [ ] Update `SparkSubmissionService` to call REST API instead of stub
-- [ ] Implement file writing for generated PySpark code
-- [ ] Configure shared volume between Quarkus and Spark containers
-- [ ] Add scheduled polling for job status updates
-- [ ] Update `Job` entity to store `submissionId` from Spark
-- [ ] Test end-to-end: flow → code generation → submission → status tracking
+## Confidence Assessment
+
+| Area | Confidence | Rationale |
+|------|------------|-----------|
+| Helm Chart Structure | HIGH | Official Helm docs, established patterns, Chart API v2 confirmed current |
+| PostgreSQL Subchart | MEDIUM | Bitnami chart verified, but OCI registry deprecation noted (still usable for dev) |
+| Apache Spark Operator | HIGH | Official docs, recent release (Jan 2026), explicit Spark Connect support confirmed |
+| Testing Tools | MEDIUM | WebSearch + official docs, patterns verified across multiple sources |
+| Telepresence | HIGH | Official release notes (v2.26.0, Jan 2026), Java setup guides confirmed |
+| Quarkus Integration | HIGH | Quarkus docs, SmallRye Health well-established, no new extensions needed |
 
 ## Sources
 
-**HIGH Confidence (Official Documentation & Recent Releases)**:
-- [Apache Spark News](https://spark.apache.org/news/) — Spark 4.0.2 release (Feb 5, 2026)
-- [Spark Connect Overview](https://spark.apache.org/docs/latest/spark-connect-overview.html) — Language support verification
-- [Spark Standalone Mode](https://spark.apache.org/docs/latest/spark-standalone.html) — REST API configuration
-- [Monitoring and Instrumentation](https://spark.apache.org/docs/latest/monitoring.html) — Status tracking APIs
+### Helm & Chart Structure
+- [Helm Best Practices](https://helm.sh/docs/chart_best_practices/)
+- [Helm Charts: The Complete Guide for 2026](https://devtoolbox.dedyn.io/blog/helm-charts-complete-guide)
+- [Charts | Helm](https://helm.sh/docs/topics/charts/)
+- [Managing Helm Chart Dependencies and Subcharts](https://oneuptime.com/blog/post/2026-01-17-helm-chart-dependencies-subcharts/view)
+- [Use OCI-based registries | Helm](https://helm.sh/docs/topics/registries/)
 
-**MEDIUM Confidence (Community & Docker Hub)**:
-- [apache/spark Docker Hub](https://hub.docker.com/r/apache/spark/) — Official Docker images
-- [Spark REST API Tutorial](https://sparkbyexamples.com/spark/submit-spark-job-via-rest-api/) — REST submission examples
-- [Spark Connect Docker Compose](https://medium.com/@yssmelo/spark-connect-launch-spark-applications-anywhere-with-the-client-server-architecture-dbt-f99399c566fe) — Docker setup patterns
+### PostgreSQL Helm Chart
+- [Bitnami PostgreSQL Helm chart](https://artifacthub.io/packages/helm/bitnami/postgresql)
+- [Bitnami PostgreSQL chart GitHub](https://github.com/bitnami/charts/tree/main/bitnami/postgresql)
+- [Upcoming changes to Bitnami catalog](https://github.com/bitnami/charts/issues/35164) (Aug 2025 OCI deprecation)
 
-**LOW Confidence (Livy Compatibility)**:
-- [Apache Livy GitHub Discussions](https://github.com/apache/incubator-livy) — Spark 4.0 support discussion (not released)
-- [Livy Compatibility Status](http://www.mail-archive.com/dev@livy.apache.org/msg00233.html) — Scala 2.13 + Spark 4 discussion
+### Spark on Kubernetes
+- [Apache Spark Kubernetes Operator](https://apache.github.io/spark-kubernetes-operator/)
+- [Apache Spark Kubernetes Operator GitHub](https://github.com/apache/spark-kubernetes-operator)
+- [Running Spark on Kubernetes - Spark 4.1.0 Documentation](https://spark.apache.org/docs/latest/running-on-kubernetes.html)
+- [How to Set Up Kubernetes Batch Processing with Apache Spark Operator](https://oneuptime.com/blog/post/2026-02-09-batch-processing-spark-operator/view)
+- [Kubeflow Spark Operator](https://github.com/kubeflow/spark-operator)
+- [Spark Connect support Issue #1801](https://github.com/kubeflow/spark-operator/issues/1801)
+- [Stackable Spark Connect Documentation](https://docs.stackable.tech/home/stable/spark-k8s/usage-guide/spark-connect/)
+- [Stackable Spark Connect Release](https://stackable.tech/en/lets-spark-connect/)
 
----
-*Stack research for: Spark Connect Integration (Subsequent Milestone)*
-*Researched: 2026-02-08*
-*Primary Recommendation: Spark Standalone REST API (not Spark Connect client)*
+### Testing Tools
+- [Automated Testing for Kubernetes and Helm Charts using Terratest](https://blog.gruntwork.io/automated-testing-for-kubernetes-and-helm-charts-using-terratest-a4ddc4e67344)
+- [Testing Helm Charts with Chart Testing (ct) and helm test](https://oneuptime.com/blog/post/2026-01-17-helm-chart-testing-ct-helm-test/view)
+- [How to Write and Run Tests for Helm Charts](https://oneuptime.com/blog/post/2026-01-17-helm-chart-testing-unittest-conftest/view)
+- [Advanced Test Practices For Helm Charts](https://medium.com/@zelldon91/advanced-test-practices-for-helm-charts-587caeeb4cb)
+
+### k3d & Local Development
+- [k3d GitHub](https://github.com/k3d-io/k3d)
+- [K3d for Local Kubernetes Development](https://devtron.ai/blog/k3d-for-local-kubernetes-development/)
+- [K3S + K3D = K8S a new perfect match for dev and test](https://www.sokube.io/en/blog/k3s-k3d-k8s-a-new-perfect-match-for-dev-and-test-en)
+
+### Telepresence
+- [Telepresence 2.26 Release](https://telepresence.io/blog/telepresence-2.26)
+- [Telepresence Quick Start - Java](https://www.getambassador.io/docs/latest/telepresence/quick-start/qs-java/)
+- [Remote debugging using Telepresence | IntelliJ IDEA](https://www.jetbrains.com/help/idea/telepresence.html)
+- [Configure intercept using CLI](https://telepresence.io/docs/2.19/reference/intercepts/cli)
+
+### Quarkus Kubernetes
+- [Kubernetes extension - Quarkus](https://quarkus.io/guides/deploying-to-kubernetes)
+- [SmallRye Health - Quarkus](https://quarkus.io/guides/smallrye-health)
+- [Helm Extension for Quarkus](https://docs.quarkiverse.io/quarkus-helm/dev/index.html)
+
+## Open Questions
+
+1. **PostgreSQL chart migration strategy**: Should we switch from Bitnami (no updates) to CloudNativePG or stick with frozen Bitnami for consistency? → Defer to production deployment phase
+2. **Spark Operator bundling**: Should Helm chart include Spark Operator as dependency or assume pre-installation? → Default to bundled for dev convenience, document BYOO (Bring Your Own Operator) pattern
+3. **Image registry**: Where to host Atadflow images? → Milestone scope: local registry for k3d, document external registry setup
+4. **Ingress controller**: Which ingress implementation for k3d? → Traefik (k3s default) vs NGINX vs skip for v1.2
+5. **Secrets management**: How to handle PostgreSQL passwords in values? → Document pattern: Helm secrets, sealed-secrets, or external-secrets-operator (user choice)

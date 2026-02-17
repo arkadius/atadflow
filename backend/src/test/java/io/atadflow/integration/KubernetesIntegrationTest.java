@@ -25,7 +25,7 @@ import static org.hamcrest.Matchers.*;
  * Prerequisites:
  * 1. k3d cluster running: k3d cluster create
  * 2. Docker image built: docker build -t atadflow/atadflow:1.2.0 .
- * 3. Image loaded: k3d image import atadflow/atadflow:1.2.0
+ * 3. Images loaded: k3d image import atadflow/atadflow:1.2.0 apache/spark:4.0.2
  * 4. Helm CLI installed
  *
  * Run with: K8S_INTEGRATION_TEST=true ./gradlew test --tests KubernetesIntegrationTest
@@ -42,13 +42,14 @@ public class KubernetesIntegrationTest {
     private static final String RELEASE_NAME = "atadflow";
     private static final String CHART_PATH = "../chart";
 
+    private static final String SPARK_OPERATOR_VERSION = "2.4.0";
+    private static final String SPARK_VERSION = "4.0.2";
+    private static final String SPARK_IMAGE = "apache/spark:" + SPARK_VERSION;
+
     private static KubernetesClient client;
     private static Process portForwardProcess;
     private static String baseUrl;
 
-    /**
-     * Run a command and ignore the result - for commands where we don't care about output.
-     */
     private static int run(String... cmd) throws Exception {
         Process p = new ProcessBuilder(cmd)
                 .redirectErrorStream(true)
@@ -57,16 +58,13 @@ public class KubernetesIntegrationTest {
         return p.waitFor();
     }
 
-    /**
-     * Run a command and capture its output.
-     */
     private static String runCapture(String... cmd) throws Exception {
         Process p = new ProcessBuilder(cmd)
                 .redirectErrorStream(true)
                 .start();
         String output = new String(p.getInputStream().readAllBytes());
-        p.waitFor();
-        return output;
+        int exitCode = p.waitFor();
+        return exitCode == 0 ? output : "";
     }
 
     @BeforeAll
@@ -80,40 +78,51 @@ public class KubernetesIntegrationTest {
                 .start()
                 .waitFor();
 
-        // 2. Install Kubeflow Spark Operator via Helm
-        System.out.println("Installing Spark K8s Operator...");
-        // Remove old repo if exists (from previous Apache Spark K8s Operator)
+        // 2. Install Kubeflow Spark Operator v2.4.0
+        System.out.println("Installing Kubeflow Spark Operator " + SPARK_OPERATOR_VERSION + "...");
         run("helm", "repo", "remove", "spark-operator");
         run("helm", "repo", "add", "spark-operator", "https://kubeflow.github.io/spark-operator");
         run("helm", "repo", "update");
         run("helm", "install", "spark-operator", "spark-operator/spark-operator",
                 "--namespace", NAMESPACE,
+                "--version", SPARK_OPERATOR_VERSION,
+                "--set", "spark.jobNamespaces[0]=" + NAMESPACE,
                 "--create-namespace",
                 "--wait", "--timeout", "5m");
 
         // 3. Apply RBAC for Spark
         applySparkRbac();
 
-        // 4. Deploy SparkApplication for Spark Connect server
+        // 4. Deploy SparkConnect server via operator CRD
         deploySparkConnect();
 
-        // 5. Deploy Spark Connect Service
-        deploySparkConnectService();
-
-        // 6. Wait for Spark Connect driver pod to be ready
-        System.out.println("Waiting for Spark Connect driver pod...");
+        // 5. Wait for Spark Connect server pod to be ready
+        System.out.println("Waiting for Spark Connect server pod...");
         Config config = new ConfigBuilder().withNamespace(NAMESPACE).build();
         client = new KubernetesClientBuilder().withConfig(config).build();
 
-        // Wait for Spark Connect driver pod - try multiple label selectors
-        boolean podReady = waitForSparkDriverPod();
-        if (!podReady) {
-            System.err.println("Warning: Spark driver pod not found with standard labels. Checking available pods...");
-            String pods = runCapture("kubectl", "get", "pods", "-n", NAMESPACE, "-o", "wide");
-            System.err.println("Available pods: " + pods);
+        boolean sparkReady = false;
+        for (int i = 0; i < 60; i++) { // 5 minutes, polling every 5s
+            String endpoints = runCapture("kubectl", "get", "endpoints", "-n", NAMESPACE,
+                    "spark-connect-server-server", "-o", "jsonpath={.subsets[*].addresses[*].ip}");
+            if (!endpoints.isBlank()) {
+                sparkReady = true;
+                break;
+            }
+            if (i % 6 == 0) { // every 30s, dump diagnostic info
+                System.out.println("  Spark Connect not ready (attempt " + i + "/60). Checking pods...");
+                String pods = runCapture("kubectl", "get", "pods", "-n", NAMESPACE, "-o", "wide");
+                System.out.println(pods);
+                String sparkConnect = runCapture("kubectl", "get", "sparkconnect", "-n", NAMESPACE, "-o", "yaml");
+                System.out.println(sparkConnect);
+            }
+            Thread.sleep(5_000);
         }
+        Assertions.assertTrue(sparkReady,
+                "Spark Connect server never became ready. Check spark-operator logs and SparkConnect resource status.");
+        System.out.println("Spark Connect server is ready.");
 
-        // 7. Install atadflow Helm chart
+        // 6. Install atadflow Helm chart
         System.out.println("Installing atadflow Helm chart...");
         run("helm", "dependency", "build", CHART_PATH);
         run("helm", "install", RELEASE_NAME, CHART_PATH,
@@ -121,11 +130,11 @@ public class KubernetesIntegrationTest {
                 "--dependency-update",
                 "--set", "postgresql.auth.password=testpass",
                 "--set", "image.pullPolicy=Never",
-                "--set", "spark.connectUrl=sc://spark-connect:15002",
+                "--set", "spark.connectUrl=sc://spark-connect-server-server:15002",
                 "--set", "securityContext.readOnlyRootFilesystem=false",
                 "--wait", "--timeout", "5m");
 
-        // 8. Wait for atadflow deployment readiness
+        // 7. Wait for atadflow deployment readiness
         System.out.println("Waiting for atadflow deployment readiness...");
         client.apps().deployments()
                 .inNamespace(NAMESPACE)
@@ -136,21 +145,20 @@ public class KubernetesIntegrationTest {
                                 && d.getStatus().getReadyReplicas() > 0,
                         5, TimeUnit.MINUTES);
 
-        // 9. Set up port-forward via kubectl (more reliable than Fabric8 port-forward)
+        // 8. Set up port-forward via kubectl
         System.out.println("Setting up port-forward...");
         portForwardProcess = new ProcessBuilder(
                 "kubectl", "port-forward", "-n", NAMESPACE, "svc/" + RELEASE_NAME, "0:80")
                 .redirectErrorStream(true)
                 .start();
 
-        // Read the assigned local port from kubectl output (e.g. "Forwarding from 127.0.0.1:12345 -> 8080")
         BufferedReader reader = new BufferedReader(new InputStreamReader(portForwardProcess.getInputStream()));
         String line = reader.readLine();
         System.out.println("Port-forward output: " + line);
         int localPort = Integer.parseInt(line.replaceAll(".*:(\\d+) ->.*", "$1"));
         baseUrl = "http://localhost:" + localPort;
 
-        // 10. Wait for app to respond through port-forward
+        // 9. Wait for app to respond through port-forward
         System.out.println("Waiting for app to be reachable at " + baseUrl + "...");
         await()
                 .atMost(Duration.ofMinutes(2))
@@ -164,48 +172,6 @@ public class KubernetesIntegrationTest {
                     return status == 200;
                 });
         System.out.println("=== Test setup complete. Base URL: " + baseUrl + " ===");
-    }
-
-    private static boolean waitForSparkDriverPod() {
-        // Try the standard label first
-        try {
-            client.pods().inNamespace(NAMESPACE)
-                    .withLabel("spark-app-name", "spark-connect-server")
-                    .waitUntilCondition(
-                            pod -> pod.getStatus() != null
-                                    && pod.getStatus().getPhase() != null
-                                    && pod.getStatus().getPhase().equals("Running"),
-                            5, TimeUnit.MINUTES);
-            return true;
-        } catch (Exception e) {
-            // Try broader selection
-        }
-
-        try {
-            client.pods().inNamespace(NAMESPACE)
-                    .withLabel("spark-role", "driver")
-                    .waitUntilCondition(
-                            pod -> pod.getStatus() != null
-                                    && pod.getStatus().getPhase() != null
-                                    && pod.getStatus().getPhase().equals("Running"),
-                            5, TimeUnit.MINUTES);
-            return true;
-        } catch (Exception e) {
-            // Try with statefulset label
-        }
-
-        try {
-            client.pods().inNamespace(NAMESPACE)
-                    .withLabel("app.kubernetes.io/name", "spark-connect-server")
-                    .waitUntilCondition(
-                            pod -> pod.getStatus() != null
-                                    && pod.getStatus().getPhase() != null
-                                    && pod.getStatus().getPhase().equals("Running"),
-                            5, TimeUnit.MINUTES);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     private static void applySparkRbac() throws Exception {
@@ -251,65 +217,45 @@ public class KubernetesIntegrationTest {
     }
 
     private static void deploySparkConnect() throws Exception {
-        String sparkApp = """
-                apiVersion: sparkoperator.k8s.io/v1beta2
-                kind: SparkApplication
+        // Note: Both executor and server templates with containers are required to work around
+        // a nil pointer panic in Spark Operator v2.4.0 imageOption (options.go:86/87).
+        String sparkConnect = """
+                apiVersion: sparkoperator.k8s.io/v1alpha1
+                kind: SparkConnect
                 metadata:
                   name: spark-connect-server
                   namespace: %s
                 spec:
-                  type: Scala
-                  mode: cluster
-                  sparkVersion: "3.5.0"
-                  mainClass: org.apache.spark.sql.connect.service.SparkConnectServer
-                  mainApplicationFile: "spark://spark@spark-master:7077"
-                  sparkConf:
-                    spark.kubernetes.authenticate.driver.serviceAccountName: "spark"
-                    spark.kubernetes.container.image: "apache/spark:3.5.0"
-                    spark.kubernetes.namespace: "%s"
-                    spark.connect.server.grpc.port: "15002"
-                    spark.driver.memory: "1g"
-                    spark.executor.memory: "1g"
-                    spark.executor.cores: "1"
-                    spark.dynamicAllocation.enabled: "false"
-                  driver:
-                    serviceAccount: spark
+                  image: %s
+                  sparkVersion: "%s"
+                  server:
+                    memory: "1g"
+                    template:
+                      spec:
+                        serviceAccountName: spark
+                        containers:
+                          - name: spark-connect
+                            image: %s
                   executor:
                     instances: 1
-                    serviceAccount: spark
-                """.formatted(NAMESPACE, NAMESPACE);
+                    memory: "1g"
+                    cores: 1
+                    template:
+                      spec:
+                        serviceAccountName: spark
+                        containers:
+                          - name: spark-kubernetes-executor
+                            image: %s
+                """.formatted(NAMESPACE, SPARK_IMAGE, SPARK_VERSION, SPARK_IMAGE, SPARK_IMAGE);
 
-        Path sparkFile = Files.createTempFile("spark-connect", ".yaml");
-        Files.writeString(sparkFile, sparkApp);
-        run("kubectl", "apply", "-f", sparkFile.toString());
-        Files.deleteIfExists(sparkFile);
-    }
-
-    private static void deploySparkConnectService() throws Exception {
-        String svc = """
-                apiVersion: v1
-                kind: Service
-                metadata:
-                  name: spark-connect
-                  namespace: %s
-                spec:
-                  selector:
-                    spark-role: driver
-                  ports:
-                  - port: 15002
-                    targetPort: 15002
-                  type: ClusterIP
-                """.formatted(NAMESPACE);
-
-        Path svcFile = Files.createTempFile("spark-connect-svc", ".yaml");
-        Files.writeString(svcFile, svc);
-        run("kubectl", "apply", "-f", svcFile.toString());
-        Files.deleteIfExists(svcFile);
+        Path file = Files.createTempFile("spark-connect", ".yaml");
+        Files.writeString(file, sparkConnect);
+        run("kubectl", "apply", "-f", file.toString());
+        Files.deleteIfExists(file);
     }
 
     @AfterAll
     static void tearDown() {
-        // Dump pod logs for debugging if something went wrong
         try {
             if (client != null) {
                 client.pods().inNamespace(NAMESPACE).list().getItems().forEach(pod -> {
@@ -384,8 +330,7 @@ public class KubernetesIntegrationTest {
 
     @Test
     @Order(3)
-    void testFullStackFlowSubmission() {
-        // Reuse same flow JSON from DockerComposeIntegrationTest:
+    void testFullStackFlowSubmission() throws InterruptedException {
         // rate source (1 row/sec) -> console sink (append mode)
         String flowJson = """
                 {
@@ -443,30 +388,42 @@ public class KubernetesIntegrationTest {
                 .body("status", equalTo("RUNNING"))
                 .extract().path("id");
 
-        // Poll until SUCCEEDED or RUNNING (rate source streams forever, so
-        // "staying RUNNING for 15+ seconds" proves Spark execution works).
-        // Then cancel and verify cancellation.
+        // Verify job stays RUNNING for 30 seconds by polling every 5s.
+        // If Spark Connect is unavailable, the Python process will fail and the job
+        // transitions to FAILED. Sustained RUNNING with no error proves real execution.
         try {
-            await()
-                    .atMost(Duration.ofSeconds(30))
-                    .pollInterval(Duration.ofSeconds(3))
-                    .untilAsserted(() -> {
-                        String status = given()
-                                .baseUri(baseUrl)
-                                .when().get("/api/jobs/" + jobId)
-                                .then().statusCode(200)
-                                .extract().path("status");
+            for (int i = 0; i < 6; i++) {
+                TimeUnit.SECONDS.sleep(5);
 
-                        if ("FAILED".equals(status)) {
-                            String error = given()
-                                    .baseUri(baseUrl)
-                                    .when().get("/api/jobs/" + jobId)
-                                    .then().extract().path("errorMessage");
-                            throw new AssertionError("Job failed: " + error);
-                        }
-                        // Job staying RUNNING proves Spark execution works
-                        assertThat(status).isIn("RUNNING", "SUCCEEDED");
-                    });
+                String status = given()
+                        .baseUri(baseUrl)
+                        .when().get("/api/jobs/" + jobId)
+                        .then().statusCode(200)
+                        .extract().path("status");
+
+                if ("FAILED".equals(status)) {
+                    String error = given()
+                            .baseUri(baseUrl)
+                            .when().get("/api/jobs/" + jobId)
+                            .then().extract().path("errorMessage");
+                    Assertions.fail("Job failed after " + ((i + 1) * 5) + "s — Spark execution not working. Error: " + error);
+                }
+
+                assertThat(status)
+                        .as("Job should be RUNNING at check " + (i + 1) + "/6 (after " + ((i + 1) * 5) + "s)")
+                        .isEqualTo("RUNNING");
+            }
+
+            // Final check: verify no error message after 30s of sustained RUNNING
+            String errorMessage = given()
+                    .baseUri(baseUrl)
+                    .when().get("/api/jobs/" + jobId)
+                    .then().statusCode(200)
+                    .extract().path("errorMessage");
+            assertThat(errorMessage)
+                    .as("Job running for 30s should have no error message — proving real Spark execution")
+                    .isNull();
+
         } finally {
             // Cancel the streaming job (rate source runs forever)
             given()
@@ -481,12 +438,12 @@ public class KubernetesIntegrationTest {
                     .atMost(Duration.ofSeconds(60))
                     .pollInterval(Duration.ofSeconds(3))
                     .until(() -> {
-                        String status = given()
+                        String s = given()
                                 .baseUri(baseUrl)
                                 .when().get("/api/jobs/" + jobId)
                                 .then().statusCode(200)
                                 .extract().path("status");
-                        return "CANCELLED".equals(status) || "FAILED".equals(status);
+                        return "CANCELLED".equals(s) || "FAILED".equals(s);
                     });
         }
     }

@@ -1,5 +1,32 @@
 # Milestones: Atadflow
 
+## v1.2 Helm Chart Distribution (Shipped: 2026-02-17)
+
+**Delivered:** Kubernetes deployment via Helm chart with PostgreSQL dependency, production-ready Spark Connect research, and end-to-end integration test proving full-stack execution on k3d.
+
+**Phases completed:** 1-5 (5 plans total)
+
+**Key accomplishments:**
+
+- Helm chart with Bitnami PostgreSQL 18.3.0 as subchart dependency
+- Spark Connect production deployment research (Kubeflow Spark Operator selected)
+- Kubernetes health probes (/q/health/live, /q/health/ready) and configurable resources verified
+- End-to-end K8s integration test with full Spark execution on k3d (3 tests pass)
+- Telepresence local development workflow documented
+- busybox init container for PostgreSQL readiness, kubectl port-forward for test reliability
+
+**Stats:**
+
+- 33 files created/modified (4,513 insertions)
+- 5 phases, 5 plans, 30 commits
+- 10 days from 2026-02-07 to 2026-02-16
+
+**Git range:** `docs(01-helm-chart)` -> `docs(phase-5)`
+
+**Last phase number:** 5
+
+---
+
 ## v1.1 Self-Contained Docker Distribution (Shipped: 2026-02-13)
 
 **Delivered:** Single Docker image packaging backend + frontend + Python/PySpark runtime, with health monitoring and integration tests proving end-to-end deployment.
